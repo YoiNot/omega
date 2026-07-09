@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"]
+  },
+  "references": [
+    { "path": "../../packages/engine-math" },
+    { "path": "../../packages/engine-core" },
+    { "path": "../../packages/world-gen" },
+    { "path": "../../packages/render" },
+    { "path": "../../packages/sim" },
+    { "path": "../../packages/save" }
+  ],
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

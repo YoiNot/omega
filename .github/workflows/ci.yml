@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, 'feature/**']
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test -- --coverage
+      - name: Coverage gate
+        run: |
+          # vitest writes coverage-summary.json when configured; fail under floor.
+          if [ -f coverage/coverage-summary.json ]; then
+            node -e "const s=require('./coverage/coverage-summary.json').total; const ok=s.lines.pct>=60&&s.functions.pct>=60&&s.statements.pct>=60; if(!ok){console.error('Coverage below floor',s);process.exit(1)}"
+          fi

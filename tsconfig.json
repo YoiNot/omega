@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/engine-math" },
+    { "path": "./packages/engine-core" },
+    { "path": "./packages/world-gen" },
+    { "path": "./packages/physics" },
+    { "path": "./packages/render" },
+    { "path": "./packages/save" },
+    { "path": "./packages/sim" },
+    { "path": "./apps/web" }
+  ]
+}

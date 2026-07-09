@@ -59,7 +59,11 @@
       "path": "./apps/web"
     },
     {
+<<<<<<< HEAD
       "path": "./packages/ref-a"
+=======
+      "path": "./packages/ref-b"
+>>>>>>> origin/feat/mtest-b
     }
   ]
 }

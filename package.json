@@ -13,6 +13,7 @@
     "packages/ecs",
     "packages/ai",
     "packages/ui",
+    "packages/nav",
     "apps/*"
   ],
   "scripts": {

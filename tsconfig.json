@@ -9,6 +9,7 @@
     { "path": "./packages/render" },
     { "path": "./packages/save" },
     { "path": "./packages/sim" },
+    { "path": "./packages/net" },
     { "path": "./apps/web" }
   ]
 }

@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "./packages/ecs" },
+    { "path": "./packages/time" },
     { "path": "./packages/engine-math" },
     { "path": "./packages/engine-core" },
     { "path": "./packages/ai" },

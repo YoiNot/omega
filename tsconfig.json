@@ -38,12 +38,6 @@
       "path": "./packages/procgen"
     },
     {
-      "path": "./packages/ref-k"
-    },
-    {
-      "path": "./packages/ref-l"
-    },
-    {
       "path": "./packages/render"
     },
     {

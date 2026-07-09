@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/engine-math" },
     { "path": "./packages/engine-core" },
+    { "path": "./packages/ai" },
     { "path": "./packages/audio" },
     { "path": "./packages/geology" },
     { "path": "./packages/world-gen" },

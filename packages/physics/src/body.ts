@@ -19,6 +19,12 @@ export interface RigidBodyOptions {
   velocity?: Vec3;
   /** Make the body static (immovable). Overrides mass. */
   isStatic?: boolean;
+  /**
+   * Resting threshold (m/s). When a body's downward speed on contact is below
+   * this, restitution is not applied and the normal velocity is zeroed so the
+   * body comes to rest instead of bouncing forever. Default 0.5.
+   */
+  restThreshold?: number;
 }
 
 export interface RigidBody {
@@ -29,6 +35,8 @@ export interface RigidBody {
   invMass: number;
   radius: number;
   restitution: number;
+  /** Speed below which ground contact causes rest instead of a bounce. */
+  restThreshold: number;
   onGround: boolean;
 }
 
@@ -52,6 +60,7 @@ export function createBody(
     invMass,
     radius: opts.radius ?? 0.5,
     restitution: opts.restitution ?? 0.2,
+    restThreshold: opts.restThreshold ?? 0.5,
     onGround: false,
   };
 }

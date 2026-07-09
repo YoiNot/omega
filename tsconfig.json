@@ -17,6 +17,7 @@
     { "path": "./packages/sim" },
     { "path": "./packages/net" },
     { "path": "./packages/input" },
+    { "path": "./packages/ui" },
     { "path": "./apps/web" }
   ]
 }

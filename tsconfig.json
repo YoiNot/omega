@@ -12,6 +12,7 @@
     { "path": "./packages/save" },
     { "path": "./packages/sim" },
     { "path": "./packages/net" },
+    { "path": "./packages/input" },
     { "path": "./apps/web" }
   ]
 }

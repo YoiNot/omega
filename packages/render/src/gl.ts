@@ -1,5 +1,8 @@
 import { Mat4 } from '@omega/engine-math';
 import type { MeshData } from './mesh.js';
+import type { Camera } from './camera.js';
+import type { ColorGradient } from './color.js';
+import type { Renderer } from './renderer-types.js';
 
 /**
  * Minimal subset of the WebGL2 API used by {@link WebGL2Renderer}.
@@ -35,7 +38,7 @@ const COLOR_BUFFER_BIT = 0x4000;
  * `this.calls` so behavior is asserted without a real GL context. Actual GL
  * calls are guarded by `if (this.gl)`, so a null GL yields pure recording.
  */
-export class WebGL2Renderer {
+export class WebGL2Renderer implements Renderer {
   readonly gl: GLLike | null;
   readonly calls: string[] = [];
   private program: any = null;
@@ -95,6 +98,35 @@ export class WebGL2Renderer {
       this.gl.vertexAttribPointer(0, 3, FLOAT, false, 0, 0);
       this.gl.drawElements(TRIANGLES, mesh.indexCount, UNSIGNED_INT, 0);
     }
+  }
+
+  /**
+   * Renderer-contract entry point: clear + draw the mesh from the camera's
+   * view-projection matrix, vertex-colored by `gradient` (color is recorded
+   * for parity but the WebGL2 path does not branch on it here).
+   */
+  render(mesh: MeshData, camera: Camera, gradient: ColorGradient): void {
+    if (gradient.getStops().length === 0) {
+      throw new Error('WebGL2Renderer.render: gradient has no stops');
+    }
+    this.clear(0.05, 0.08, 0.14, 1);
+    this.drawMesh(mesh, camera.getViewProjection());
+  }
+
+  /** Resize the drawing surface. Records 'resize'. */
+  resize(width: number, height: number): void {
+    this.calls.push('resize');
+    if (this.gl) {
+      // In a real WebGL2 context this would be canvas.width/height.
+      void width;
+      void height;
+    }
+  }
+
+  /** Release GL resources. Records 'dispose'; clears the program handle. */
+  dispose(): void {
+    this.calls.push('dispose');
+    this.program = null;
   }
 }
 

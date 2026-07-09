@@ -95,7 +95,8 @@ export function computeNormals(positions: Float32Array, indices: Uint32Array): F
 
     ab.x = b.x - a.x; ab.y = b.y - a.y; ab.z = b.z - a.z;
     ac.x = c.x - a.x; ac.y = c.y - a.y; ac.z = c.z - a.z;
-    face.copy(ab).cross(ac);
+    // Vec3.cross returns a NEW vector; copy its result into `face` (it does not mutate in place).
+    face.copy(ab.cross(ac));
 
     // Accumulate to all three vertices of the face.
     normals[i0 * 3] += face.x;

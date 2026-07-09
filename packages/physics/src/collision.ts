@@ -9,7 +9,6 @@
  * Everything is deterministic: no Math.random, only Vec3 math from engine-math.
  */
 
-import { Vec3 } from '@omega/engine-math';
 import type { RigidBody } from './body.js';
 
 /** Axis-aligned bounding box of a sphere. */
@@ -82,9 +81,10 @@ export function resolveSphereSphere(a: RigidBody, b: RigidBody): boolean {
   const rsum = a.radius + b.radius;
   if (dist >= rsum) return false; // not overlapping
 
-  // Degenerate case: coincident centers — pick a stable arbitrary axis.
+  // Degenerate case: coincident centers — pick a stable arbitrary axis and
+  // treat penetration as the full sum of radii (dist = 0).
   if (dist < 1e-9) {
-    nx = 0; ny = 1; nz = 0; dist = 1;
+    nx = 0; ny = 1; nz = 0; dist = 0;
   } else {
     const inv = 1 / dist;
     nx *= inv; ny *= inv; nz *= inv;
@@ -139,9 +139,14 @@ export function resolveSphereGround(b: RigidBody, groundY: number): boolean {
   }
   const penetration = groundY - bottom;
   b.position.y += penetration;
-  if (b.velocity.y < 0) {
-    b.velocity.y = -b.velocity.y * b.restitution;
-  }
   b.onGround = true;
+  if (b.velocity.y < 0) {
+    // Below the resting threshold, the body settles instead of bouncing.
+    if (b.velocity.y > -b.restThreshold) {
+      b.velocity.y = 0;
+    } else {
+      b.velocity.y = -b.velocity.y * b.restitution;
+    }
+  }
   return true;
 }

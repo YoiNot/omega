@@ -18,9 +18,10 @@
     "lint": "tsc -b --noEmit"
   },
   "devDependencies": {
+    "@types/node": "^20.12.7",
+    "@vitest/coverage-v8": "^1.6.1",
     "typescript": "^5.4.5",
-    "vitest": "^1.6.0",
-    "@types/node": "^20.12.7"
+    "vitest": "^1.6.0"
   },
   "engines": {
     "node": ">=20"

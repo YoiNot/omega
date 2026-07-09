@@ -59,7 +59,11 @@
       "path": "./packages/world-gen"
     },
     {
+<<<<<<< HEAD
       "path": "./packages/ref-g"
+=======
+      "path": "./packages/ref-h"
+>>>>>>> origin/feat/mtest-h
     }
   ]
 }

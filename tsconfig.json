@@ -1,24 +1,65 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/ecs" },
-    { "path": "./packages/time" },
-    { "path": "./packages/serialization" },
-    { "path": "./packages/engine-math" },
-    { "path": "./packages/engine-core" },
-    { "path": "./packages/ai" },
-    { "path": "./packages/nav" },
-    { "path": "./packages/audio" },
-    { "path": "./packages/geology" },
-    { "path": "./packages/world-gen" },
-    { "path": "./packages/procgen" },
-    { "path": "./packages/physics" },
-    { "path": "./packages/render" },
-    { "path": "./packages/save" },
-    { "path": "./packages/sim" },
-    { "path": "./packages/net" },
-    { "path": "./packages/input" },
-    { "path": "./packages/ui" },
-    { "path": "./apps/web" }
+    {
+      "path": "./packages/ecs"
+    },
+    {
+      "path": "./packages/time"
+    },
+    {
+      "path": "./packages/serialization"
+    },
+    {
+      "path": "./packages/engine-math"
+    },
+    {
+      "path": "./packages/engine-core"
+    },
+    {
+      "path": "./packages/ai"
+    },
+    {
+      "path": "./packages/nav"
+    },
+    {
+      "path": "./packages/audio"
+    },
+    {
+      "path": "./packages/geology"
+    },
+    {
+      "path": "./packages/world-gen"
+    },
+    {
+      "path": "./packages/procgen"
+    },
+    {
+      "path": "./packages/physics"
+    },
+    {
+      "path": "./packages/render"
+    },
+    {
+      "path": "./packages/save"
+    },
+    {
+      "path": "./packages/sim"
+    },
+    {
+      "path": "./packages/net"
+    },
+    {
+      "path": "./packages/input"
+    },
+    {
+      "path": "./packages/ui"
+    },
+    {
+      "path": "./apps/web"
+    },
+    {
+      "path": "./packages/ref-a"
+    }
   ]
 }

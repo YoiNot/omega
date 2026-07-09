@@ -11,6 +11,7 @@
     "packages/serialization",
     "packages/ecs",
     "packages/ai",
+    "packages/nav",
     "apps/*"
   ],
   "scripts": {

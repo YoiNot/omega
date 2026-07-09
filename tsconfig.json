@@ -2,40 +2,40 @@
   "files": [],
   "references": [
     {
-      "path": "./packages/ecs"
-    },
-    {
-      "path": "./packages/time"
-    },
-    {
-      "path": "./packages/serialization"
-    },
-    {
-      "path": "./packages/engine-math"
-    },
-    {
-      "path": "./packages/engine-core"
+      "path": "./apps/web"
     },
     {
       "path": "./packages/ai"
     },
     {
-      "path": "./packages/nav"
+      "path": "./packages/audio"
     },
     {
-      "path": "./packages/audio"
+      "path": "./packages/ecs"
+    },
+    {
+      "path": "./packages/engine-core"
+    },
+    {
+      "path": "./packages/engine-math"
     },
     {
       "path": "./packages/geology"
     },
     {
-      "path": "./packages/world-gen"
+      "path": "./packages/input"
     },
     {
-      "path": "./packages/procgen"
+      "path": "./packages/nav"
+    },
+    {
+      "path": "./packages/net"
     },
     {
       "path": "./packages/physics"
+    },
+    {
+      "path": "./packages/procgen"
     },
     {
       "path": "./packages/render"
@@ -44,26 +44,19 @@
       "path": "./packages/save"
     },
     {
+      "path": "./packages/serialization"
+    },
+    {
       "path": "./packages/sim"
     },
     {
-      "path": "./packages/net"
-    },
-    {
-      "path": "./packages/input"
+      "path": "./packages/time"
     },
     {
       "path": "./packages/ui"
     },
     {
-      "path": "./apps/web"
-    },
-    {
-<<<<<<< HEAD
-      "path": "./packages/ref-a"
-=======
-      "path": "./packages/ref-b"
->>>>>>> origin/feat/mtest-b
+      "path": "./packages/world-gen"
     }
   ]
 }

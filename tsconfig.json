@@ -10,6 +10,7 @@
     { "path": "./packages/audio" },
     { "path": "./packages/geology" },
     { "path": "./packages/world-gen" },
+    { "path": "./packages/procgen" },
     { "path": "./packages/physics" },
     { "path": "./packages/render" },
     { "path": "./packages/save" },

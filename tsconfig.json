@@ -57,6 +57,9 @@
     },
     {
       "path": "./packages/world-gen"
+    },
+    {
+      "path": "./packages/ref-e"
     }
   ]
 }

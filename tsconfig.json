@@ -1,6 +1,7 @@
 {
   "files": [],
   "references": [
+    { "path": "./packages/ecs" },
     { "path": "./packages/engine-math" },
     { "path": "./packages/engine-core" },
     { "path": "./packages/ai" },

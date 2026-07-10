@@ -199,24 +199,70 @@ export class Codec {
 
   /** Serialize every live entity and its replicated components to bytes. */
   serialize(world: World): Uint8Array {
-    const w = new BinaryWriter();
+    return this.fromLogical(this.toLogical(world));
+  }
+
+  /**
+   * Serialize only the given entity ids (used by interest management to ship a
+   * per-client relevance subset). Ids are emitted in ascending order so the
+   * output is deterministic; ids that are not alive or have no replicated
+   * component are silently skipped.
+   */
+  serializeEntities(world: World, ids: Iterable<number>): Uint8Array {
+    const want = new Set<number>(ids);
+    const logical = this.toLogical(world);
+    const filtered: LogicalSnapshot = { entities: logical.entities.filter((e) => want.has(e.id)) };
+    return this.fromLogical(filtered);
+  }
+
+  /**
+   * Project a world into its structured, encoder-agnostic logical form. Each
+   * replicated component is captured as its *raw encoded bytes* (so custom
+   * encoders round-trip losslessly) and tagged with its wire id. Layout is
+   * fully deterministic: entities ascending by id, components ascending by wire
+   * id. `fromLogical(toLogical(world))` is byte-identical to `serialize(world)`.
+   */
+  toLogical(world: World): LogicalSnapshot {
     const entities = world.entities().slice().sort((a, b) => a - b);
-    w.u32(entities.length);
+    const out: LogicalEntity[] = [];
     for (const id of entities) {
-      w.i32(id);
-      // Collect this entity's replicated components in stable wire-id order.
-      const parts: Array<{ id: number; enc: Registered<unknown> }> = [];
+      const comps: LogicalComponent[] = [];
       for (const reg of this.byDef.values()) {
         if (world.hasComponent(id, reg.def)) {
-          parts.push({ id: reg.id, enc: reg });
+          const value = world.getComponent(id, reg.def) as ComponentValue<unknown>;
+          comps.push({ cid: reg.id, bytes: this.encodeComponent(value, reg) });
         }
       }
-      parts.sort((a, b) => a.id - b.id);
-      w.u32(parts.length);
-      for (const p of parts) {
-        w.u32(p.id);
-        const value = world.getComponent(id, p.enc.def) as ComponentValue<unknown>;
-        p.enc.encode(value, w);
+      comps.sort((a, b) => a.cid - b.cid);
+      out.push({ id, comps });
+    }
+    return { entities: out };
+  }
+
+  /** Encode one component value to a length-prefixed-free byte blob. */
+  private encodeComponent(value: unknown, reg: Registered<unknown>): Uint8Array {
+    const w = new BinaryWriter();
+    reg.encode(value, w);
+    return w.toUint8Array();
+  }
+
+  /**
+   * Re-encode a logical snapshot back into the exact wire layout used by
+   * `serialize`. The framing is: u32(entityCount) [ i32(id) u32(compCount)
+   * [ u32(cid) <comp-bytes> ]* ]*. Reconstructing via this function guarantees
+   * determinism parity with `serialize` for equivalent logical state.
+   */
+  fromLogical(s: LogicalSnapshot): Uint8Array {
+    const w = new BinaryWriter();
+    const ents = s.entities.slice().sort((a, b) => a.id - b.id);
+    w.u32(ents.length);
+    for (const ent of ents) {
+      w.i32(ent.id);
+      const comps = ent.comps.slice().sort((a, b) => a.cid - b.cid);
+      w.u32(comps.length);
+      for (const c of comps) {
+        w.u32(c.cid);
+        for (const b of c.bytes) w.u8(b);
       }
     }
     return w.toUint8Array();
@@ -257,14 +303,29 @@ export class Codec {
    * target id. Input is always supplied in ascending order and entity deletion
    * (where needed) is done ascending as well, so the allocator cooperates and
    * this terminates immediately in the common case.
+   *
+   * Exposed publicly so sibling modules (@omega/net-delta, @omega/net-replication
+   * rollback) can materialize exact ids without re-encoding the wire layout.
    */
-  private ensureEntity(world: World, target: EntityId): EntityId {
+  ensureEntity(world: World, target: EntityId): EntityId {
     if (world.isAlive(target)) return target;
     let id = world.createEntity();
     while (id < target) {
       id = world.createEntity();
     }
     return id;
+  }
+
+  /** Resolve the `ComponentDef` registered under `cid`, or undefined. */
+  componentDefFor(cid: number): ComponentDef<unknown> | undefined {
+    return this.byId.get(cid)?.def;
+  }
+
+  /** Decode a component's raw bytes (as produced by `toLogical`) back to a value. */
+  decodeComponentValue(cid: number, bytes: Uint8Array): unknown {
+    const reg = this.byId.get(cid);
+    if (!reg) throw new RangeError(`codec: unknown wire component id ${cid}`);
+    return reg.decode(new BinaryReader(bytes));
   }
 }
 
@@ -289,4 +350,25 @@ export function snapshotToWorld(s: WorldSnapshot, world: World, codec: Codec): E
   const alive = world.entities().slice().sort((a, b) => a - b);
   for (const id of alive) world.destroyEntity(id);
   return codec.deserialize(s.data, world);
+}
+
+/**
+ * Encoder-agnostic structural projection of a snapshot. Used by
+ * `@omega/net-delta` to diff two worlds (and by interest management to slice a
+ * relevance subset), without depending on the concrete byte layout.
+ */
+export interface LogicalComponent {
+  /** Wire id of the component type (stable per `registerComponent`). */
+  readonly cid: number;
+  /** Raw bytes the component's encoder produced. */
+  readonly bytes: Uint8Array;
+}
+
+export interface LogicalEntity {
+  readonly id: EntityId;
+  readonly comps: LogicalComponent[];
+}
+
+export interface LogicalSnapshot {
+  readonly entities: LogicalEntity[];
 }

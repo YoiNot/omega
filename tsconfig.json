@@ -62,6 +62,9 @@
       "path": "./packages/net"
     },
     {
+      "path": "./packages/net-delta"
+    },
+    {
       "path": "./packages/net-replication"
     },
     {

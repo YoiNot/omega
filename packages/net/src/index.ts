@@ -7,6 +7,8 @@
  */
 
 export * from './transport.js';
+export * from './hub.js';
 export * from './commands.js';
 export * from './snapshot.js';
 export * from './reconcile.js';
+export * from './interest.js';

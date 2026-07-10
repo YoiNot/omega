@@ -90,4 +90,11 @@ echo "=== merged $merged PR(s); queue cleared ==="
 git fetch origin main >/dev/null 2>&1
 git checkout main >/dev/null 2>&1
 git pull origin main >/dev/null 2>&1
+# Fresh workspace symlinks: a merged package adds @omega/<pkg> imports that
+# only resolve if npm workspaces has linked it into node_modules/@omega.
+# Without this, `tsc -b` on main goes red even though the agent gate was green
+# (the agent had run npm install in its own worktree). Re-run ensures new and
+# changed package symlinks exist before any post-merge verification.
+echo "=== npm install (refresh workspace symlinks for merged packages) ==="
+npm install >/dev/null 2>&1 && echo "npm install OK" || echo "npm install FAILED"
 echo "main at $(git rev-parse --short HEAD)"

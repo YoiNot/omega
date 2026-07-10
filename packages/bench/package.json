@@ -1,0 +1,17 @@
+{
+  "name": "@omega/bench",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Deterministic benchmark framework for PROJECT OMEGA (PRNG-seeded, no wall-clock).",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@omega/engine-core": "*"
+  }
+}

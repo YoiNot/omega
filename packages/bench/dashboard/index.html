@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OMEGA Benchmark Dashboard</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #0d1117; color: #c9d1d9; margin: 0; padding: 24px;
+    }
+    h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+    .sub { color: #8b949e; font-size: 12px; margin-bottom: 20px; }
+    .controls { margin-bottom: 16px; }
+    .controls input {
+      background: #161b22; color: #c9d1d9; border: 1px solid #30363d;
+      border-radius: 6px; padding: 6px 10px; width: 360px; font: inherit;
+    }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid #21262d; }
+    th:first-child, td:first-child { text-align: left; }
+    th { color: #8b949e; font-weight: 500; cursor: default; }
+    tbody tr:hover { background: #161b22; }
+    .bar-track { position: relative; width: 100%; height: 10px; background: #161b22; border-radius: 5px; overflow: hidden; }
+    .bar-fill { position: absolute; left: 0; top: 0; bottom: 0; background: #2f81f7; }
+    .median-cell { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+    .median-cell .bar-track { width: 120px; }
+    .error { color: #f85149; padding: 8px 0; }
+    .ok { color: #3fb950; }
+  </style>
+</head>
+<body>
+  <h1>OMEGA Benchmark Dashboard</h1>
+  <div class="sub">Deterministic metrics (Median / Min / Max / Mean) from <code>packages/*/bench-*.json</code>. No wall-clock — measurements are pure functions of PRNG-seeded inputs.</div>
+
+  <div class="controls">
+    <input id="glob" type="text" placeholder="glob(s) to fetch, comma-separated — e.g. ../*/bench-*.json,../bench/bench-*.json" value="../*/bench-*.json" />
+    <label style="margin-left:8px;font-size:12px;color:#8b949e">JSON schema: <code>omega-bench/1</code></label>
+  </div>
+
+  <div id="status"></div>
+  <table id="tbl" hidden>
+    <thead>
+      <tr>
+        <th>Benchmark</th>
+        <th>Iterations</th>
+        <th>Seed</th>
+        <th>Min</th>
+        <th>Max</th>
+        <th>Mean</th>
+        <th>Median</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <script type="module">
+    const globInput = document.getElementById('glob');
+    const statusEl = document.getElementById('status');
+    const table = document.getElementById('tbl');
+    const rows = document.getElementById('rows');
+
+    // Tiny glob -> URL matcher. Supports '*' (path segment, no slashes).
+    function expandGlob(pattern) {
+      // Convert the pattern into a fetch for each matching path by trying the
+      // literal pattern first, then enumerated siblings via a manifest if present.
+      // For static hosting we keep it simple: replace '*' segments by probing a
+      // packages manifest.
+      const m = pattern.match(/^(.*?)\*([^/]*)$/);
+      if (!m) return [pattern];
+      // Probe a generated manifest of package directories.
+      return null; // resolved asynchronously via PACKAGE_DIRS below.
+    }
+
+    // Best-effort list of sibling package dirs, used to expand '*'.
+    const PACKAGE_DIRS = ['engine-core', 'ecs', 'bench', 'fuzz', 'profiler', 'ai', 'job'];
+
+    function resolveUrls(raw) {
+      const out = [];
+      for (let p of raw.split(',').map(s => s.trim()).filter(Boolean)) {
+        if (!p.includes('*')) { out.push(p); continue; }
+        for (const dir of PACKAGE_DIRS) {
+          out.push(p.replace('*', dir));
+        }
+      }
+      // de-dup
+      return [...new Set(out)];
+    }
+
+    function fmt(n) {
+      if (!Number.isFinite(n)) return String(n);
+      if (Number.isInteger(n)) return n.toLocaleString('en-US');
+      return n.toFixed(3);
+    }
+
+    async function loadOne(url) {
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (!data || data.schema !== 'omega-bench/1') return null;
+        return data;
+      } catch { return null; }
+    }
+
+    async function refresh() {
+      statusEl.textContent = 'Loading…';
+      table.hidden = true;
+      const urls = resolveUrls(globInput.value);
+      const results = (await Promise.all(urls.map(loadOne))).filter(Boolean);
+      if (results.length === 0) {
+        statusEl.innerHTML = '<span class="error">No bench-*.json found at: ' +
+          urls.map(u => u.replace(/&/g, '&amp;')).join(', ') + '</span>' +
+          '<br/><span class="sub">Place files like <code>packages/&lt;pkg&gt;/bench-&lt;name&gt;.json</code> (schema <code>omega-bench/1</code>) and serve via <code>npx http-server</code> or open through a local server.</span>';
+        return;
+      }
+      rows.innerHTML = '';
+      results.sort((a, b) => a.name.localeCompare(b.name));
+      const maxMed = Math.max(1, ...results.map(r => Math.abs(r.median)));
+      for (const r of results) {
+        const tr = document.createElement('tr');
+        const pct = (Math.abs(r.median) / maxMed) * 100;
+        tr.innerHTML =
+          `<td>${r.name}</td>` +
+          `<td>${r.iterations}</td>` +
+          `<td>${r.seed}</td>` +
+          `<td>${fmt(r.min)}</td>` +
+          `<td>${fmt(r.max)}</td>` +
+          `<td>${fmt(r.mean)}</td>` +
+          `<td><div class="median-cell"><div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div><span>${fmt(r.median)}</span></div></td>`;
+        rows.appendChild(tr);
+      }
+      table.hidden = false;
+      statusEl.innerHTML = `<span class="ok">${results.length} benchmark(s) loaded.</span>`;
+    }
+
+    globInput.addEventListener('change', refresh);
+    globInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') refresh(); });
+    refresh();
+  </script>
+</body>
+</html>

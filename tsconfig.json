@@ -26,6 +26,15 @@
       "path": "./packages/engine-math"
     },
     {
+      "path": "./packages/bench"
+    },
+    {
+      "path": "./packages/fuzz"
+    },
+    {
+      "path": "./packages/profiler"
+    },
+    {
       "path": "./packages/job"
     },
     {

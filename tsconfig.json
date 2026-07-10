@@ -101,6 +101,15 @@
       "path": "./packages/sim"
     },
     {
+      "path": "./packages/sim-env"
+    },
+    {
+      "path": "./packages/sim-fire"
+    },
+    {
+      "path": "./packages/sim-eco"
+    },
+    {
       "path": "./packages/time"
     },
     {

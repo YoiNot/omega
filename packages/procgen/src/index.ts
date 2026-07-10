@@ -8,3 +8,5 @@
 export * from './rng.js';
 export * from './biome.js';
 export * from './scatter.js';
+export * from './hydrology.js';
+export * from './climate.js';

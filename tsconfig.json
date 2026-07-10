@@ -38,6 +38,9 @@
       "path": "./packages/nav"
     },
     {
+      "path": "./packages/nav-core"
+    },
+    {
       "path": "./packages/net"
     },
     {

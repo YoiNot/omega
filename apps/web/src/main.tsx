@@ -5,6 +5,7 @@ import { Camera } from '@omega/render';
 import { createDemo, buildTerrain, type Demo } from './engine';
 import { TerrainRenderer } from './renderer';
 import { ModdingPanel } from './modding-panel';
+import { ReplayPanel } from './replay-panel';
 
 const TERRAIN_SIZE = 40;
 
@@ -39,6 +40,8 @@ function App() {
     bodies: 0,
     netConverged: true,
     fps: 0,
+    agents: 0,
+    delivered: 0,
   });
 
   const terrainCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -139,6 +142,21 @@ function App() {
             ctx.strokeStyle = 'rgba(255,255,255,0.35)';
             ctx.stroke();
           }
+
+          // GOAP agents: draw as small squares at their tile centre. Colour
+          // shifts green once the agent has delivered (goal reached).
+          for (const a of demo.agentPositions()) {
+            const center = new Vec3(a.tx + 0.5, 0.6, a.tz + 0.5);
+            const sp = projectToScreen(vp, center, overlay.width, overlay.height);
+            if (!sp) continue;
+            ctx.beginPath();
+            ctx.rect(sp.x - 5, sp.y - 5, 10, 10);
+            ctx.fillStyle = a.delivered ? 'rgba(120,255,140,0.95)' : 'rgba(255,235,120,0.95)';
+            ctx.fill();
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+            ctx.stroke();
+          }
         }
 
         // HUD metrics.
@@ -158,6 +176,8 @@ function App() {
           bodies: demo.physicsPositions().length,
           netConverged: converged,
           fps: dt > 0 ? Math.round(1 / dt) : 0,
+          agents: demo.agentPositions().length,
+          delivered: demo.agentPositions().filter((a) => a.delivered === 1).length,
         });
       }
       rafRef.current = requestAnimationFrame(loop);
@@ -197,6 +217,8 @@ function App() {
           <Metric label="Physics bodies" value={String(metrics.bodies)} />
           <Metric label="Client = Server" value={metrics.netConverged ? 'CONVERGED ✓' : 'diverged ✗'} />
           <Metric label="Render FPS" value={String(metrics.fps)} />
+          <Metric label="GOAP agents" value={String(metrics.agents)} />
+          <Metric label="Delivered (goal)" value={`${metrics.delivered}/${metrics.agents}`} />
           <h3 style={{ marginTop: 24 }}>What this proves</h3>
           <ul style={{ color: '#8fa3b8', paddingLeft: 16, lineHeight: 1.5 }}>
             <li><b>physics-integration</b>: deterministic fixed-step rigid bodies on a seeded World</li>
@@ -211,9 +233,12 @@ function App() {
             <li><b>input-core</b>: live DOM input source → deterministic InputFrame → command payload</li>
             <li><b>time-core</b>: fixed-timestep scheduler is the tick source (FPS-decoupled)</li>
             <li><b>replay</b>: optional Recorder snapshots each tick; Playback rebuilds the world deterministically</li>
+            <li><b>ai-goap</b>: agents plan (deliver a resource) via forward A* GOAP — same state ⇒ same plan</li>
+            <li><b>nav-core</b>: agents navigate a biome-derived grid via A*/flow-field — same world ⇒ same path</li>
             <li>Headless determinism test: same seed → same end state; input→record→replay→play identity</li>
           </ul>
           <ModdingPanel demoRef={demoRef} />
+          <ReplayPanel demoRef={demoRef} />
         </aside>
       </div>
     </div>

@@ -25,6 +25,7 @@ function deepClone(r: HeadlessResult): HeadlessResult {
     physics: r.physics.map((e) => [...e]),
     netServer: r.netServer.map((e) => [...e]),
     netClient: r.netClient.map((e) => [...e]),
+    agents: r.agents.map((e) => [...e]),
   };
 }
 

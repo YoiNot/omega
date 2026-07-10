@@ -68,6 +68,9 @@ import {
   HeightfieldMeshBuilder,
 } from '@omega/render';
 import { TerrainGenerator, BIOME_COUNT } from '@omega/world-gen';
+import { Vec2 } from '@omega/engine-math';
+import { buildNavGrid, type BooleanGrid } from './nav';
+import { GoapSystem, AGENT_STORE } from './ai';
 import {
   Codec,
   ReplicatedServer,
@@ -278,6 +281,8 @@ export interface DemoOptions {
   inputHost?: InputHost;
   /** When true, attach an optional @omega/replay `Recorder` that snapshots the physics world each tick. */
   record?: boolean;
+  /** Number of GOAP agents to spawn on the nav grid (deterministic). Default 2. */
+  agents?: number;
 }
 
 export interface ObservableBody {
@@ -301,6 +306,10 @@ export interface Demo {
   scheduler: Scheduler;
   /** Optional replay recorder (records a world snapshot per fixed tick). */
   recorder?: Recorder;
+  /** Deterministic GOAP AI system (agents plan + navigate the nav grid). */
+  goap: GoapSystem;
+  /** Navigation grid derived from the seeded terrain biomes. */
+  navGrid: BooleanGrid;
   fixedDt: number;
   terrainSeed: string;
   /** Advance the whole loop by one fixed tick (one scheduler sub-step). */
@@ -315,6 +324,16 @@ export interface Demo {
   netPositionsServer(): ObservableBody[];
   /** Observable net positions on the reconciled (client) world. */
   netPositionsClient(): ObservableBody[];
+  /** Observable GOAP agent tile positions (ascending entity id). */
+  agentPositions(): { id: number; tx: number; tz: number; delivered: number }[];
+  /** Planned action names for agent `entity` (deterministic GOAP plan). */
+  agentPlan(entity: number): string[];
+  /** Begin capturing world snapshots each tick (resets any prior capture). */
+  startRecording(): void;
+  /** Stop capturing world snapshots. */
+  stopRecording(): void;
+  /** True while the recorder is actively capturing frames. */
+  isRecording(): boolean;
 }
 
 export function createDemo(opts: DemoOptions): Demo {
@@ -325,6 +344,7 @@ export function createDemo(opts: DemoOptions): Demo {
   const netEntities = opts.netEntities ?? 5;
   const fixedDt = opts.fixedDt ?? 1 / 60;
   const gravity = opts.gravity ?? [0, -9.81, 0];
+  const agentCount = opts.agents ?? 2;
 
   // --- 1. Local deterministic physics (engine-core World) -----------------
   const coreWorld = new CoreWorld();
@@ -475,10 +495,37 @@ export function createDemo(opts: DemoOptions): Demo {
   // --- time-core: fixed-timestep scheduler is the tick source ---
   const scheduler = createScheduler({ dt: fixedDt, maxSubSteps: 5 });
 
-  // --- replay: optional recorder that snapshots the physics world each tick ---
-  const recorder = opts.record
-    ? new Recorder([PhysicsBody.name], { seedLow: seedToU64Low(seed), seedHigh: seedToU64High(seed) })
-    : undefined;
+  // --- nav-core: build a navigation grid from the seeded terrain biomes ---
+  // The agents walk this grid; impassable biomes (ocean/mountain/snow) are
+  // blocked. A pure function of the seed, so the grid is identical every run.
+  const terrainGen = new TerrainGenerator(seed, { size: terrainSize });
+  const terrain = terrainGen.generate();
+  const navGrid = buildNavGrid(terrain);
+
+  // --- ai-goap: spawn GOAP agents that plan (deliver a resource) + navigate ---
+  // Locations are deterministic tiles derived from the grid dimensions (no RNG),
+  // so the plan and every A* path are pure functions of the seed.
+  const goap = new GoapSystem(coreWorld, navGrid);
+  const gw = navGrid.width;
+  const gh = navGrid.height;
+  const resourceTile = new Vec2(Math.floor(gw * 0.2), Math.floor(gh * 0.2));
+  const baseTile = new Vec2(Math.floor(gw * 0.8), Math.floor(gh * 0.8));
+  const agentIds: number[] = [];
+  for (let i = 0; i < agentCount; i++) {
+    // Stagger agents along the top edge deterministically.
+    const startX = Math.floor(((i + 1) / (agentCount + 1)) * gw);
+    const startTile = new Vec2(startX, Math.floor(gh * 0.5));
+    agentIds.push(goap.spawnAgent(startTile, resourceTile, baseTile));
+  }
+
+  // --- replay: recorder that snapshots the physics + agent world each tick ---
+  // Always constructed so the UI can Record/Stop at runtime; capture is gated by
+  // `recording` (initialised from opts.record for the headless record harness).
+  const recorder = new Recorder([PhysicsBody.name, AGENT_STORE], {
+    seedLow: seedToU64Low(seed),
+    seedHigh: seedToU64High(seed),
+  });
+  let recording = opts.record ?? false;
 
   // --- 4. Per-tick sync of the view world from physics + net server --------
   function syncView(): void {
@@ -516,6 +563,8 @@ export function createDemo(opts: DemoOptions): Demo {
     input,
     scheduler,
     recorder,
+    goap,
+    navGrid,
     fixedDt,
     terrainSeed: seed,
     step(): void {
@@ -524,6 +573,8 @@ export function createDemo(opts: DemoOptions): Demo {
       scheduler.step(fixedDt, () => {
         // (a) advance local physics one fixed step
         coreWorld.step(fixedDt);
+        // (a2) advance GOAP agents one tile along their planned nav route
+        goap.step();
         // (b) input -> client predicts, server simulates, snapshot reconciles
         const payload = input.next();
         const cmd = client.sendIntent(payload);
@@ -532,7 +583,7 @@ export function createDemo(opts: DemoOptions): Demo {
         transport.send(encodeFrame(snap.tick, snap.data));
         transport.tick();
         // (c) record an optional world snapshot for replay
-        if (recorder) recorder.recordFrame(coreWorld, scheduler.frame - 1, fixedDt);
+        if (recording) recorder.recordFrame(coreWorld, scheduler.frame - 1, fixedDt);
         // (d) mirror observable state into the view world for rendering
         syncView();
       });
@@ -567,6 +618,22 @@ export function createDemo(opts: DemoOptions): Demo {
       }
       return out;
     },
+    agentPositions() {
+      return goap.positions();
+    },
+    agentPlan(entity: number): string[] {
+      return goap.planNames(entity);
+    },
+    startRecording(): void {
+      recorder.clear();
+      recording = true;
+    },
+    stopRecording(): void {
+      recording = false;
+    },
+    isRecording(): boolean {
+      return recording;
+    },
   };
   return demo;
 }
@@ -581,6 +648,7 @@ export interface HeadlessResult {
   physics: number[][]; // [id, x, y, z] per body
   netServer: number[][];
   netClient: number[][];
+  agents: number[][]; // [id, tx, tz, delivered] per GOAP agent
 }
 
 export function runHeadless(
@@ -596,6 +664,7 @@ export function runHeadless(
     physics: pack(demo.physicsPositions()),
     netServer: pack(demo.netPositionsServer()),
     netClient: pack(demo.netPositionsClient()),
+    agents: demo.agentPositions().map((a) => [a.id, a.tx, a.tz, a.delivered]),
   };
 }
 
@@ -622,6 +691,7 @@ export function recordHeadless(
       physics: pack(demo.physicsPositions()),
       netServer: pack(demo.netPositionsServer()),
       netClient: pack(demo.netPositionsClient()),
+      agents: demo.agentPositions().map((a) => [a.id, a.tx, a.tz, a.delivered]),
     },
   };
 }
@@ -637,7 +707,9 @@ export function replayHeadless(
   ticks: number,
 ): HeadlessResult {
   const world = new CoreWorld();
-  const playback = new Playback(recording, world, [PhysicsBody.name]);
+  // The recording snapshots BOTH the physics bodies and the GOAP agents, so the
+  // playback rebuilds the full observable world (physics + AI) tick-for-tick.
+  const playback = new Playback(recording, world, [PhysicsBody.name, AGENT_STORE]);
   playback.playTo(ticks - 1);
   const round = (n: number) => Math.round(n * 1e6) / 1e6;
   const pack = (b: ObservableBody[]) => b.map((e) => [e.id, round(e.x), round(e.y), round(e.z)]);
@@ -646,10 +718,18 @@ export function replayHeadless(
     const b = world.getComponent(PhysicsBody.name, id) as RigidBody | undefined;
     if (b) out.push({ id, x: b.position.x, y: b.position.y, z: b.position.z });
   }
+  const agents: number[][] = [];
+  for (const id of world.store(AGENT_STORE).keys()) {
+    const a = world.getComponent(AGENT_STORE, id) as
+      | { tx: number; tz: number; delivered: number }
+      | undefined;
+    if (a) agents.push([id, a.tx, a.tz, a.delivered]);
+  }
   return {
     physics: pack(out),
     netServer: [],
     netClient: [],
+    agents,
   };
 }
 

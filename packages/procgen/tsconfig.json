@@ -4,7 +4,8 @@
   "references": [
     { "path": "../engine-core" },
     { "path": "../engine-math" },
-    { "path": "../world-gen" }
+    { "path": "../world-gen" },
+    { "path": "../geology" }
   ],
   "include": ["src/**/*.ts"]
 }

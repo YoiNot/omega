@@ -9,6 +9,7 @@
   "dependencies": {
     "@omega/engine-core": "*",
     "@omega/engine-math": "*",
-    "@omega/world-gen": "*"
+    "@omega/world-gen": "*",
+    "@omega/geology": "*"
   }
 }

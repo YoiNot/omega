@@ -10,3 +10,5 @@ export * from './biome.js';
 export * from './scatter.js';
 export * from './hydrology.js';
 export * from './climate.js';
+export * from './tectonics.js';
+export * from './erosion.js';

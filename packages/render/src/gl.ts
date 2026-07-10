@@ -2,14 +2,12 @@ import { Mat4 } from '@omega/engine-math';
 import type { MeshData } from './mesh.js';
 import type { Camera } from './camera.js';
 import type { ColorGradient } from './color.js';
-import type { Renderer } from './renderer-types.js';
+import type { Renderer, PbrRenderInput } from './renderer-types.js';
+import type { LodMesh } from './lod-types.js';
+import { selectLodLevel, defaultThresholds } from './lod.js';
+import { buildPbrUniform } from './webgpu.js';
 
-/**
- * Minimal subset of the WebGL2 API used by {@link WebGL2Renderer}.
- * Implemented by a real WebGL2RenderingContext in the browser, or by a
- * recording fake in Node tests. This isolates GL (browser-only) from the
- * pure, Node-testable command recording logic.
- */
+/** GL enum constants re-exported for callers / tests. */
 export interface GLLike {
   createBuffer(): any;
   bindBuffer(t: number, d: any): void;
@@ -121,6 +119,42 @@ export class WebGL2Renderer implements Renderer {
       void width;
       void height;
     }
+  }
+
+  /**
+   * PBR render of one mesh. The WebGL2 path records the draw with a `pbr`
+   * tag plus the resolved material uniform; the same command-encoding contract
+   * as `render` (clear + draw) is preserved so downstream callers stay
+   * backend-agnostic.
+   */
+  renderPbr(mesh: MeshData, camera: Camera, input: PbrRenderInput): void {
+    if (input.sun.shadows && input.sun.shadows.cascades < 1) {
+      throw new Error('WebGL2Renderer.renderPbr: cascades must be >= 1');
+    }
+    this.clear(0.05, 0.08, 0.14, 1);
+    this.drawMesh(mesh, camera.getViewProjection());
+    const u = buildPbrUniform(input);
+    this.calls.push(
+      `drawIndexedPbr:vertexCount=${mesh.vertexCount},indexCount=${mesh.indexCount}`,
+    );
+    this.calls.push(`pbrUniform:${Array.from(u).map((v) => v.toFixed(4)).join(',')}`);
+  }
+
+  /**
+   * LOD dispatch for the WebGL2 path: pick a level from camera distance
+   * (pure, clock-free) then PBR-render it. Records the chosen level.
+   */
+  renderLod(lod: LodMesh, camera: Camera, input: PbrRenderInput): void {
+    const camPos = camera.getPosition();
+    const dx = camPos.x - lod.center.x;
+    const dy = camPos.y - lod.center.y;
+    const dz = camPos.z - lod.center.z;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const thresholds = defaultThresholds(lod.levels.length);
+    const level = selectLodLevel(dist, thresholds, lod.levels.length);
+    this.calls.push(`lodSelect:dist=${dist.toFixed(4)},level=${level}`);
+    const mesh = lod.levels[level]!.mesh;
+    this.renderPbr(mesh, camera, input);
   }
 
   /** Release GL resources. Records 'dispose'; clears the program handle. */

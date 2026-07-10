@@ -5,3 +5,6 @@ export * from './gl.js';
 export * from './webgpu.js';
 export * from './renderer-types.js';
 export * from './renderer.js';
+export * from './pbr-types.js';
+export * from './lod-types.js';
+export * from './lod.js';

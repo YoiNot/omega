@@ -14,6 +14,11 @@ export {
   worldToSnapshot,
   snapshotToWorld,
 } from './codec.js';
+export type {
+  LogicalComponent,
+  LogicalEntity,
+  LogicalSnapshot,
+} from './codec.js';
 export type { WorldSnapshot } from '@omega/net';
 
 export {
@@ -26,6 +31,12 @@ export {
   ReplicatedClient,
   type ReplicatedClientOptions,
 } from './client.js';
+
+export {
+  rollback,
+  hasDiverged,
+  RollbackStage,
+} from './rollback.js';
 
 // Re-export the underlying net building blocks for convenience so consumers
 // can build transports / snapshots without a second import line.

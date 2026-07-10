@@ -8,6 +8,9 @@
       "path": "./packages/ai"
     },
     {
+      "path": "./packages/ai-goap"
+    },
+    {
       "path": "./packages/audio"
     },
     {

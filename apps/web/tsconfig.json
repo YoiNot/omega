@@ -18,6 +18,9 @@
     { "path": "../../packages/render-ecs" },
     { "path": "../../packages/net" },
     { "path": "../../packages/net-replication" },
+    { "path": "../../packages/input-core" },
+    { "path": "../../packages/replay" },
+    { "path": "../../packages/time-core" },
     { "path": "../../packages/sim" },
     { "path": "../../packages/save" }
   ],

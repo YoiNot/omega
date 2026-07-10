@@ -50,6 +50,9 @@
       "path": "./packages/render-ecs"
     },
     {
+      "path": "./packages/replay"
+    },
+    {
       "path": "./packages/save"
     },
     {

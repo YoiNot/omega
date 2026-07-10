@@ -68,9 +68,15 @@ import {
   HeightfieldMeshBuilder,
 } from '@omega/render';
 import { TerrainGenerator, BIOME_COUNT } from '@omega/world-gen';
-import { Vec2 } from '@omega/engine-math';
-import { buildNavGrid, type BooleanGrid } from './nav';
+import type { BooleanGrid } from './nav';
 import { GoapSystem, AGENT_STORE } from './ai';
+import {
+  GameplaySystem,
+  RESOURCE_STORE,
+  BLOCKER_STORE,
+  WANDERER_STORE,
+} from './entities';
+import { buildScenario, applyScenario, type Scenario } from './scenario';
 import {
   Codec,
   ReplicatedServer,
@@ -283,6 +289,14 @@ export interface DemoOptions {
   record?: boolean;
   /** Number of GOAP agents to spawn on the nav grid (deterministic). Default 2. */
   agents?: number;
+  /** Number of resource nodes for the gameplay scenario. Default 4. */
+  resources?: number;
+  /** Number of roaming dynamic blockers. Default 2. */
+  blockers?: number;
+  /** Number of wandering scouts. Default 3. */
+  wanderers?: number;
+  /** When true, include the gameplay entity content (resource/blocker/wanderer + agents). Default true. */
+  gameplay?: boolean;
 }
 
 export interface ObservableBody {
@@ -328,7 +342,16 @@ export interface Demo {
   agentPositions(): { id: number; tx: number; tz: number; delivered: number }[];
   /** Planned action names for agent `entity` (deterministic GOAP plan). */
   agentPlan(entity: number): string[];
-  /** Begin capturing world snapshots each tick (resets any prior capture). */
+  /** Deterministic gameplay system (resource/blocker/wanderer entities). */
+  gameplay: GameplaySystem;
+  /** The seed-built scenario (world + entity placement). */
+  scenario: Scenario;
+  /** Observable resource nodes (ascending entity id). */
+  resourcePositions(): { id: number; tx: number; tz: number; amount: number }[];
+  /** Observable dynamic blocker positions (ascending entity id). */
+  blockerPositions(): { id: number; tx: number; tz: number }[];
+  /** Observable wanderer positions + gathered total (ascending entity id). */
+  wandererPositions(): { id: number; tx: number; tz: number; gathered: number }[];
   startRecording(): void;
   /** Stop capturing world snapshots. */
   stopRecording(): void;
@@ -345,6 +368,10 @@ export function createDemo(opts: DemoOptions): Demo {
   const fixedDt = opts.fixedDt ?? 1 / 60;
   const gravity = opts.gravity ?? [0, -9.81, 0];
   const agentCount = opts.agents ?? 2;
+  const resourceCount = opts.resources ?? 4;
+  const blockerCount = opts.blockers ?? 2;
+  const wandererCount = opts.wanderers ?? 3;
+  const withGameplay = opts.gameplay ?? true;
 
   // --- 1. Local deterministic physics (engine-core World) -----------------
   const coreWorld = new CoreWorld();
@@ -495,36 +522,97 @@ export function createDemo(opts: DemoOptions): Demo {
   // --- time-core: fixed-timestep scheduler is the tick source ---
   const scheduler = createScheduler({ dt: fixedDt, maxSubSteps: 5 });
 
-  // --- nav-core: build a navigation grid from the seeded terrain biomes ---
+  // --- nav-core + biome rules: build a navigation grid from the seeded terrain ---
   // The agents walk this grid; impassable biomes (ocean/mountain/snow) are
-  // blocked. A pure function of the seed, so the grid is identical every run.
-  const terrainGen = new TerrainGenerator(seed, { size: terrainSize });
-  const terrain = terrainGen.generate();
-  const navGrid = buildNavGrid(terrain);
+  // The deterministic gameplay scenario: world + resource/blocker/wanderer
+  // placements, all derived from the seed (see scenario.ts).
+  const scenario = buildScenario(seed, terrainSize, {
+    resources: resourceCount,
+    blockers: blockerCount,
+    wanderers: wandererCount,
+    agents: agentCount,
+  });
+  // `navGrid` stays the canonical plain blocked-flag grid (used by the existing
+  // nav tests / replay identity). The GOAP agents + wanderers navigate the
+  // LIVE grid so they route around the roaming blockers.
+  const navGrid: BooleanGrid = scenario.navGrid as BooleanGrid;
+  const liveGrid = scenario.liveGrid;
 
   // --- ai-goap: spawn GOAP agents that plan (deliver a resource) + navigate ---
-  // Locations are deterministic tiles derived from the grid dimensions (no RNG),
-  // so the plan and every A* path are pure functions of the seed.
-  const goap = new GoapSystem(coreWorld, navGrid);
-  const gw = navGrid.width;
-  const gh = navGrid.height;
-  const resourceTile = new Vec2(Math.floor(gw * 0.2), Math.floor(gh * 0.2));
-  const baseTile = new Vec2(Math.floor(gw * 0.8), Math.floor(gh * 0.8));
-  const agentIds: number[] = [];
-  for (let i = 0; i < agentCount; i++) {
-    // Stagger agents along the top edge deterministically.
-    const startX = Math.floor(((i + 1) / (agentCount + 1)) * gw);
-    const startTile = new Vec2(startX, Math.floor(gh * 0.5));
-    agentIds.push(goap.spawnAgent(startTile, resourceTile, baseTile));
+  // Locations are deterministic tiles derived from the scenario (no RNG), so the
+  // plan and every A* path are pure functions of the seed. Agents navigate the
+  // live grid, so a blocker on their route forces a deterministic re-route.
+  const goap = new GoapSystem(coreWorld, liveGrid);
+  // GOAP agents are spawned by applyScenario (below) from the deterministic
+  // scenario's agentTiles, so the whole placement stays a pure function of seed.
+
+  // --- gameplay: deterministic resource / blocker / wanderer entities --------
+  // Driven by the same time-core scheduler as everything else; reads the shared
+  // live grid so all movers see the blockers. Lives in the SAME engine-core
+  // world the recorder snapshots, so it is fully record/replay-deterministic.
+  const gameplay = new GameplaySystem(coreWorld, liveGrid);
+  if (withGameplay) {
+    applyScenario(scenario, gameplay, (s, r, b) => goap.spawnAgent(s, r, b));
   }
 
-  // --- replay: recorder that snapshots the physics + agent world each tick ---
+  // --- view-world (ecs) render proxies for the gameplay entities -----------
+  // Each resource/blocker/wanderer gets a deterministic renderable entity (a
+  // coloured cube/sphere) so the demo visibly shows the new content. Positions
+  // are mirrored from the authoritative engine-core world every tick in syncView.
+  const viewResourceIds: number[] = [];
+  const viewBlockerIds: number[] = [];
+  const viewWandererIds: number[] = [];
+  if (withGameplay) {
+    const resPalette: RGBA[] = [
+      [255, 215, 0, 255], // gold resource
+      [255, 170, 0, 255],
+      [255, 240, 120, 255],
+      [230, 200, 40, 255],
+    ];
+    for (let i = 0; i < scenario.resourceTiles.length; i++) {
+      const id = viewWorld.createEntity();
+      viewResourceIds.push(id);
+      viewWorld.addComponent(id, Renderable, { meshId: 'cube', color: resPalette[i % resPalette.length]! });
+      viewWorld.addComponent(id, RenderTransform, { pos: new Vec3(0, 0.5, 0), scale: new Vec3(0.7, 0.7, 0.7) });
+      viewRadius.set(id, 0.7);
+    }
+    const blkPalette: RGBA[] = [
+      [200, 60, 60, 255], // red roaming blocker
+      [160, 40, 200, 255],
+    ];
+    for (let i = 0; i < scenario.blockerTiles.length; i++) {
+      const id = viewWorld.createEntity();
+      viewBlockerIds.push(id);
+      viewWorld.addComponent(id, Renderable, { meshId: 'cube', color: blkPalette[i % blkPalette.length]! });
+      viewWorld.addComponent(id, RenderTransform, { pos: new Vec3(0, 0.6, 0), scale: new Vec3(0.9, 0.9, 0.9) });
+      viewRadius.set(id, 0.9);
+    }
+    const wanPalette: RGBA[] = [
+      [120, 220, 255, 255], // cyan scout
+      [120, 255, 200, 255],
+      [200, 255, 120, 255],
+    ];
+    for (let i = 0; i < scenario.wandererTiles.length; i++) {
+      const id = viewWorld.createEntity();
+      viewWandererIds.push(id);
+      viewWorld.addComponent(id, Renderable, { meshId: 'sphere', color: wanPalette[i % wanPalette.length]! });
+      viewWorld.addComponent(id, RenderTransform, { pos: new Vec3(0, 0.5, 0), scale: new Vec3(0.6, 0.6, 0.6) });
+      viewRadius.set(id, 0.6);
+    }
+  }
+
+  // --- replay: recorder that snapshots the physics + agent + gameplay world ---
   // Always constructed so the UI can Record/Stop at runtime; capture is gated by
   // `recording` (initialised from opts.record for the headless record harness).
-  const recorder = new Recorder([PhysicsBody.name, AGENT_STORE], {
-    seedLow: seedToU64Low(seed),
-    seedHigh: seedToU64High(seed),
-  });
+  // The gameplay stores (resource/blocker/wanderer) are recorded alongside the
+  // physics bodies + GOAP agents so playback rebuilds the full observable world.
+  const recorder = new Recorder(
+    [PhysicsBody.name, AGENT_STORE, RESOURCE_STORE, BLOCKER_STORE, WANDERER_STORE],
+    {
+      seedLow: seedToU64Low(seed),
+      seedHigh: seedToU64High(seed),
+    },
+  );
   let recording = opts.record ?? false;
 
   // --- 4. Per-tick sync of the view world from physics + net server --------
@@ -549,6 +637,35 @@ export function createDemo(opts: DemoOptions): Demo {
         scale: new Vec3(0.6, 0.6, 0.6),
       });
     }
+    // Gameplay render proxies: mirror authoritative tile positions into world
+    // space (tile + 0.5 centre, as in nav.ts tileToWorld).
+    for (let i = 0; i < viewResourceIds.length; i++) {
+      const c = gameplay.resources()[i];
+      const viewId = viewResourceIds[i]!;
+      if (!c) continue;
+      viewWorld.setComponent(viewId, RenderTransform, {
+        pos: new Vec3(c.tx + 0.5, 0.5, c.tz + 0.5),
+        scale: new Vec3(0.7, 0.7, 0.7),
+      });
+    }
+    for (let i = 0; i < viewBlockerIds.length; i++) {
+      const c = gameplay.blockers()[i];
+      const viewId = viewBlockerIds[i]!;
+      if (!c) continue;
+      viewWorld.setComponent(viewId, RenderTransform, {
+        pos: new Vec3(c.tx + 0.5, 0.6, c.tz + 0.5),
+        scale: new Vec3(0.9, 0.9, 0.9),
+      });
+    }
+    for (let i = 0; i < viewWandererIds.length; i++) {
+      const c = gameplay.wanderers()[i];
+      const viewId = viewWandererIds[i]!;
+      if (!c) continue;
+      viewWorld.setComponent(viewId, RenderTransform, {
+        pos: new Vec3(c.tx + 0.5, 0.5, c.tz + 0.5),
+        scale: new Vec3(0.6, 0.6, 0.6),
+      });
+    }
   }
 
   const demo: Demo = {
@@ -567,6 +684,8 @@ export function createDemo(opts: DemoOptions): Demo {
     navGrid,
     fixedDt,
     terrainSeed: seed,
+    gameplay,
+    scenario,
     step(): void {
       // One fixed-timestep sub-step from @omega/time-core drives the tick. The
       // scheduler owns the frame index; we do NOT read a wall clock here.
@@ -575,6 +694,10 @@ export function createDemo(opts: DemoOptions): Demo {
         coreWorld.step(fixedDt);
         // (a2) advance GOAP agents one tile along their planned nav route
         goap.step();
+        // (a3) advance gameplay entities (resource/blocker/wanderer) one tick.
+        // They read the shared live nav grid (with the blockers) so everyone
+        // re-routes around the roaming obstacles deterministically.
+        gameplay.step(scheduler.frame);
         // (b) input -> client predicts, server simulates, snapshot reconciles
         const payload = input.next();
         const cmd = client.sendIntent(payload);
@@ -624,6 +747,15 @@ export function createDemo(opts: DemoOptions): Demo {
     agentPlan(entity: number): string[] {
       return goap.planNames(entity);
     },
+    resourcePositions() {
+      return gameplay.resources();
+    },
+    blockerPositions() {
+      return gameplay.blockers();
+    },
+    wandererPositions() {
+      return gameplay.wanderers();
+    },
     startRecording(): void {
       recorder.clear();
       recording = true;
@@ -649,6 +781,9 @@ export interface HeadlessResult {
   netServer: number[][];
   netClient: number[][];
   agents: number[][]; // [id, tx, tz, delivered] per GOAP agent
+  resources: number[][]; // [id, tx, tz, amount] per resource node
+  blockers: number[][]; // [id, tx, tz] per roaming blocker
+  wanderers: number[][]; // [id, tx, tz, gathered] per wandering scout
 }
 
 export function runHeadless(
@@ -665,6 +800,9 @@ export function runHeadless(
     netServer: pack(demo.netPositionsServer()),
     netClient: pack(demo.netPositionsClient()),
     agents: demo.agentPositions().map((a) => [a.id, a.tx, a.tz, a.delivered]),
+    resources: demo.resourcePositions().map((r) => [r.id, r.tx, r.tz, r.amount]),
+    blockers: demo.blockerPositions().map((b) => [b.id, b.tx, b.tz]),
+    wanderers: demo.wandererPositions().map((w) => [w.id, w.tx, w.tz, w.gathered]),
   };
 }
 
@@ -692,6 +830,9 @@ export function recordHeadless(
       netServer: pack(demo.netPositionsServer()),
       netClient: pack(demo.netPositionsClient()),
       agents: demo.agentPositions().map((a) => [a.id, a.tx, a.tz, a.delivered]),
+      resources: demo.resourcePositions().map((r) => [r.id, r.tx, r.tz, r.amount]),
+      blockers: demo.blockerPositions().map((b) => [b.id, b.tx, b.tz]),
+      wanderers: demo.wandererPositions().map((w) => [w.id, w.tx, w.tz, w.gathered]),
     },
   };
 }
@@ -707,9 +848,16 @@ export function replayHeadless(
   ticks: number,
 ): HeadlessResult {
   const world = new CoreWorld();
-  // The recording snapshots BOTH the physics bodies and the GOAP agents, so the
-  // playback rebuilds the full observable world (physics + AI) tick-for-tick.
-  const playback = new Playback(recording, world, [PhysicsBody.name, AGENT_STORE]);
+  // The recording snapshots the physics bodies, GOAP agents AND the gameplay
+  // entities (resource/blocker/wanderer), so playback rebuilds the full
+  // observable world (physics + AI + gameplay) tick-for-tick.
+  const playback = new Playback(recording, world, [
+    PhysicsBody.name,
+    AGENT_STORE,
+    RESOURCE_STORE,
+    BLOCKER_STORE,
+    WANDERER_STORE,
+  ]);
   playback.playTo(ticks - 1);
   const round = (n: number) => Math.round(n * 1e6) / 1e6;
   const pack = (b: ObservableBody[]) => b.map((e) => [e.id, round(e.x), round(e.y), round(e.z)]);
@@ -725,11 +873,29 @@ export function replayHeadless(
       | undefined;
     if (a) agents.push([id, a.tx, a.tz, a.delivered]);
   }
+  const resources: number[][] = [];
+  for (const id of world.store(RESOURCE_STORE).keys()) {
+    const r = world.getComponent<{ tx: number; tz: number; amount: number }>(RESOURCE_STORE, id);
+    if (r) resources.push([id, r.tx, r.tz, r.amount]);
+  }
+  const blockers: number[][] = [];
+  for (const id of world.store(BLOCKER_STORE).keys()) {
+    const b = world.getComponent<{ tx: number; tz: number }>(BLOCKER_STORE, id);
+    if (b) blockers.push([id, b.tx, b.tz]);
+  }
+  const wanderers: number[][] = [];
+  for (const id of world.store(WANDERER_STORE).keys()) {
+    const w = world.getComponent<{ tx: number; tz: number; gathered: number }>(WANDERER_STORE, id);
+    if (w) wanderers.push([id, w.tx, w.tz, w.gathered]);
+  }
   return {
     physics: pack(out),
     netServer: [],
     netClient: [],
     agents,
+    resources,
+    blockers,
+    wanderers,
   };
 }
 

@@ -66,7 +66,22 @@ import {
   ColorGradient,
   computeNormals,
   HeightfieldMeshBuilder,
+  defaultPbrMaterial,
+  defaultSun,
+  buildLodMesh,
+  type LodMesh,
+  type PbrMaterial,
 } from '@omega/render';
+import {
+  ParticleSystem,
+  CloudField,
+  defaultParticleConfig,
+  defaultCloudConfig,
+  cascadesFromCamera,
+  type Cascade,
+  type ParticleConfig,
+  type CloudConfig,
+} from '@omega/render-pbr';
 import { TerrainGenerator, BIOME_COUNT } from '@omega/world-gen';
 import type { BooleanGrid } from './nav';
 import { GoapSystem, AGENT_STORE } from './ai';
@@ -346,7 +361,19 @@ export interface Demo {
   gameplay: GameplaySystem;
   /** The seed-built scenario (world + entity placement). */
   scenario: Scenario;
-  /** Observable resource nodes (ascending entity id). */
+  /** PBR material used by the demo terrain (deterministic default). */
+  pbrMaterial: PbrMaterial;
+  /** LOD chain of the terrain (fine + coarse levels). */
+  terrainLod: LodMesh;
+  /** GPU particle system (seeded; pure function of seed + ticks). */
+  particles: ParticleSystem;
+  /** Volumetric cloud field (seeded density grid). */
+  clouds: CloudField;
+  /** Cached cascaded-shadow cascades for a camera (rebuilt on demand). */
+  shadows(camera: import('@omega/render').Camera): Cascade[];
+  /** Advance the particle sim one tick (deterministic). */
+  stepParticles(): void;
+  /** Deterministic, id-ordered draw list for the current view world. */
   resourcePositions(): { id: number; tx: number; tz: number; amount: number }[];
   /** Observable dynamic blocker positions (ascending entity id). */
   blockerPositions(): { id: number; tx: number; tz: number }[];
@@ -668,6 +695,43 @@ export function createDemo(opts: DemoOptions): Demo {
     }
   }
 
+  // --- PBR terrain material + LOD chain + particles + clouds -----------
+  // All deterministic (seeded), so the same world always produces the same
+  // PBR/particle/cloud/LOD command encodings (no hidden RNG/time).
+  const pbrMaterial = defaultPbrMaterial();
+  pbrMaterial.albedo = [0.42, 0.46, 0.5]; // stone-grey terrain
+  pbrMaterial.roughness = 0.78;
+  pbrMaterial.metallic = 0.02;
+
+  // Build a 2-level LOD chain from the seeded terrain: full-res + a
+  // half-res coarse version. Index 0 = fine, 1 = coarse.
+  const terrain = new TerrainGenerator(seed, { size: terrainSize }).generate();
+  const fine = new HeightfieldMeshBuilder(terrain.heights, terrain.width, terrain.height, 8).build();
+  const coarseW = Math.max(2, Math.floor(terrain.width / 2));
+  const coarseH = Math.max(2, Math.floor(terrain.height / 2));
+  const coarseHeights = new Float32Array(coarseW * coarseH);
+  for (let z = 0; z < coarseH; z++) {
+    for (let x = 0; x < coarseW; x++) {
+      const sx = Math.min(terrain.width - 1, x * 2);
+      const sz = Math.min(terrain.height - 1, z * 2);
+      coarseHeights[z * coarseW + x] = terrain.heights[sz * terrain.width + sx]!;
+    }
+  }
+  const coarse = new HeightfieldMeshBuilder(coarseHeights, coarseW, coarseH, 8).build();
+  const terrainLod = buildLodMesh(
+    'terrain',
+    { x: terrainSize / 2, y: 0, z: terrainSize / 2 },
+    [{ mesh: fine }, { mesh: coarse }],
+  );
+
+  // Seeded GPU particle fountain (deterministic up to tick count).
+  const particleCfg: ParticleConfig = { ...defaultParticleConfig(), origin: [terrainSize / 2, 1.5, terrainSize / 2] };
+  const particles = new ParticleSystem(`${seed}:particles`, particleCfg);
+
+  // Seeded volumetric cloud field (deterministic density grid).
+  const cloudCfg: CloudConfig = { ...defaultCloudConfig(), size: terrainSize * 2 };
+  const clouds = new CloudField(`${seed}:clouds`, cloudCfg);
+
   const demo: Demo = {
     coreWorld,
     physicsSim,
@@ -686,6 +750,20 @@ export function createDemo(opts: DemoOptions): Demo {
     terrainSeed: seed,
     gameplay,
     scenario,
+    pbrMaterial,
+    terrainLod,
+    particles,
+    clouds,
+    shadows(camera: import('@omega/render').Camera): Cascade[] {
+      return cascadesFromCamera(
+        camera,
+        defaultSun().direction,
+        { cascades: defaultSun().shadows?.cascades ?? 4, lambda: defaultSun().shadows?.lambda ?? 0.6, texelSize: defaultSun().shadows?.texelSize ?? 1 },
+      );
+    },
+    stepParticles(): void {
+      this.particles.step();
+    },
     step(): void {
       // One fixed-timestep sub-step from @omega/time-core drives the tick. The
       // scheduler owns the frame index; we do NOT read a wall clock here.
@@ -924,6 +1002,60 @@ export function buildTerrain(seed: string, size = 40): TerrainView {
     colors[i * 4 + 3] = c[3] / 255;
   }
   return { terrain, mesh, normals, colors };
+}
+
+/**
+ * PBR terrain view: the existing vertex-colored mesh + normals, plus the
+ * deterministic PBR material + 2-level LOD chain used by the new
+ * Roadmap §8 render path. Pure function of `seed` (no clock).
+ */
+export interface PbrTerrainView extends TerrainView {
+  material: PbrMaterial;
+  lod: LodMesh;
+  /** Cascaded-shadow cascades for a given camera (rebuilt on demand). */
+  shadows(camera: Camera): Cascade[];
+}
+
+export function buildPbrTerrain(seed: string, size = 40): PbrTerrainView {
+  const base = buildTerrain(seed, size);
+  const material = defaultPbrMaterial();
+  material.albedo = [0.42, 0.46, 0.5];
+  material.roughness = 0.78;
+  material.metallic = 0.02;
+
+  // Coarse downsampled level for LOD.
+  const coarseW = Math.max(2, Math.floor(base.terrain.width / 2));
+  const coarseH = Math.max(2, Math.floor(base.terrain.height / 2));
+  const coarseHeights = new Float32Array(coarseW * coarseH);
+  for (let z = 0; z < coarseH; z++) {
+    for (let x = 0; x < coarseW; x++) {
+      const sx = Math.min(base.terrain.width - 1, x * 2);
+      const sz = Math.min(base.terrain.height - 1, z * 2);
+      coarseHeights[z * coarseW + x] = base.terrain.heights[sz * base.terrain.width + sx]!;
+    }
+  }
+  const coarse = new HeightfieldMeshBuilder(coarseHeights, coarseW, coarseH, 8).build();
+  const lod = buildLodMesh(
+    'terrain',
+    { x: size / 2, y: 0, z: size / 2 },
+    [{ mesh: base.mesh }, { mesh: coarse }],
+  );
+  return {
+    ...base,
+    material,
+    lod,
+    shadows(camera: Camera): Cascade[] {
+      return cascadesFromCamera(
+        camera,
+        defaultSun().direction,
+        {
+          cascades: defaultSun().shadows?.cascades ?? 4,
+          lambda: defaultSun().shadows?.lambda ?? 0.6,
+          texelSize: defaultSun().shadows?.texelSize ?? 1,
+        },
+      );
+    },
+  };
 }
 
 export type { Camera, RGBA, DrawItem };

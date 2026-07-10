@@ -23,6 +23,12 @@ class RecordingRenderer implements Renderer {
   resize(): void {
     this.calls.push('resize');
   }
+  renderPbr(): void {
+    this.calls.push('renderPbr');
+  }
+  renderLod(): void {
+    this.calls.push('renderLod');
+  }
   dispose(): void {
     this.calls.push('dispose');
   }

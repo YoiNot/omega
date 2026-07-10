@@ -26,6 +26,9 @@
       "path": "./packages/input"
     },
     {
+      "path": "./packages/input-core"
+    },
+    {
       "path": "./packages/nav"
     },
     {

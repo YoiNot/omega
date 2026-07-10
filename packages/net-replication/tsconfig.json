@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "references": [
+    { "path": "../ecs" },
+    { "path": "../net" },
+    { "path": "../engine-core" },
+    { "path": "../sim" }
+  ],
+  "include": ["src/**/*.ts"]
+}

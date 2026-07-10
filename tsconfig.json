@@ -26,6 +26,15 @@
       "path": "./packages/engine-math"
     },
     {
+      "path": "./packages/job"
+    },
+    {
+      "path": "./packages/pool"
+    },
+    {
+      "path": "./packages/reflect"
+    },
+    {
       "path": "./packages/geology"
     },
     {

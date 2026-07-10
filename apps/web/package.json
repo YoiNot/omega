@@ -20,6 +20,9 @@
     "@omega/render-ecs": "*",
     "@omega/net": "*",
     "@omega/net-replication": "*",
+    "@omega/input-core": "*",
+    "@omega/replay": "*",
+    "@omega/time-core": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

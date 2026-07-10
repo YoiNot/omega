@@ -44,6 +44,9 @@
       "path": "./packages/render"
     },
     {
+      "path": "./packages/render-ecs"
+    },
+    {
       "path": "./packages/save"
     },
     {

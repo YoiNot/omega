@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "references": [
+    { "path": "../ecs" },
+    { "path": "../render" },
+    { "path": "../engine-math" }
+  ],
+  "include": ["src/**/*.ts"]
+}

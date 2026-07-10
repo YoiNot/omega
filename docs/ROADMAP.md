@@ -58,9 +58,11 @@ engineering increments.
 - [ADDED][DONE] `@omega/physics-integration` — deterministic ECS↔physics↔sim pipeline (PR #24).
 - [NEXT] soft bodies, constraints (rope/cloth), fluids, fracture, orbital mechanics.
 
-## 12. Procedural generation — [PARTIAL]
+## 12. Procedural generation — [DONE]
 - [DONE] noise/FBM, terrain+biome grid, planet, star system, galaxy, universe catalog.
-- [NEXT] plate tectonics, erosion/sedimentation, hydrology, weather, climate, seasons.
+- [ADDED][DONE] hydrology (D8 river-network extraction), climate (deterministic weather
+  field: temp/humidity/precip/season), plate tectonics (derivation from terrain),
+  fluvial erosion (river-coupled) — all deterministic (PR #45, PR #46).
 
 ## 13. Simulation — [PARTIAL]
 - [DONE] fixed-timestep loop driving ECS systems; tick recording.

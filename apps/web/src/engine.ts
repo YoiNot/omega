@@ -18,19 +18,25 @@
  *           locally and reconciles against server snapshots; after N ticks the
  *           client world equals the server world — the determinism proof.
  *
- * Input is a THIN, OWN scripted layer (ScriptedInput) that stands in for
- * @omega/input-core + @omega/replay. The moment those packages merge, this
- * file's `Demo.input` can be swapped for the real input/replay drivers without
- * touching the rest of the loop (the loop only consumes `Uint8Array` payloads).
+ * Input is driven by @omega/input-core + @omega/replay (no more thin stand-in):
+ *   - `DemoInput` wraps a live DOM `InputSource` (via `createInputSource`) and,
+ *     on every fixed tick, samples a deterministic `InputFrame` with
+ *     `collectFrame`, encodes it to the same `Uint8Array` command payload the
+ *     loop already consumes, and optionally records the frame into an
+ *     `InputBuffer`.
+ *   - In headless/replay mode the same `DemoInput` can be fed a pre-recorded
+ *     sequence of `InputFrame`s instead of touching the DOM, so the input path
+ *     is fully deterministic and replay-safe.
  *
- * No Math.random / Date.now anywhere in the core path: every initial placement
- * comes from a seeded @omega/engine-core `Rng`, and every tick is a fixed step.
- * The whole `createDemo` + `step` pipeline is therefore a pure function of
- * (seed, tick count, input script) — see the headless determinism test.
+ * The fixed-timestep loop from @omega/time-core (`createScheduler`) is the tick
+ * source: `Demo.step` runs exactly one scheduler sub-step, so simulation time is
+ * decoupled from wall-clock time and the whole `createDemo` + `step` pipeline
+ * stays a pure function of (seed, tick count, input frames) — see the headless
+ * determinism + replay tests.
  */
 
 import { Vec3 } from '@omega/engine-math';
-import { World as CoreWorld, Rng } from '@omega/engine-core';
+import { World as CoreWorld, Rng, hashString64 } from '@omega/engine-core';
 import { World as EcsWorld, defineComponent } from '@omega/ecs';
 import {
   PhysicsSimulation,
@@ -38,6 +44,16 @@ import {
   PhysicsBody,
 } from '@omega/physics-integration';
 import type { RigidBody } from '@omega/physics';
+import { createScheduler, type Scheduler } from '@omega/time-core';
+import {
+  createInputSource,
+  collectFrame,
+  InputBuffer,
+  type InputSource as DomInputSource,
+  type InputFrame,
+  type Windowish,
+} from '@omega/input-core';
+import { Recorder, Playback, type Recording } from '@omega/replay';
 import {
   Renderable,
   Transform as RenderTransform,
@@ -90,33 +106,124 @@ export function decodeFrame(f: Uint8Array): { tick: number; data: Uint8Array } {
   return { tick, data: f.slice(8, 8 + len) };
 }
 
+/** Split a string seed into the two decimal u64 words the replay header wants. */
+function seedToU64Low(seed: string): bigint {
+  const h = hashString64(`${seed}:low`);
+  return h & 0xffffffffffffffffn;
+}
+function seedToU64High(seed: string): bigint {
+  const h = hashString64(`${seed}:high`);
+  return h & 0xffffffffffffffffn;
+}
+
 // ---------------------------------------------------------------------------
-// Thin, own input layer (replacement seam for @omega/input-core + replay).
-// Produces a deterministic command payload per tick from a seeded Rng.
+// Real input driver on top of @omega/input-core (replaces the old ScriptedInput
+// seam). `DemoInput` turns a live DOM `InputSource` into the deterministic
+// command payload the simulation loop already consumes:
 //   payload = [entityIndex(u32), ix(f32), iy(f32), iz(f32)]
-// entityIndex selects which replicated entity receives an impulse; the impulse
-// vector is drawn from the seeded Rng so two runs with the same seed diverge
-// identically and the net reconciliation still converges bit-for-bit.
+// The entity index is derived from the frame number (deterministic, never from
+// the wall clock). `ix/iy/iz` come from a seeded Rng whose state is advanced by
+// which keys are held on the sampled `InputFrame`, so two runs with the same
+// input frames diverge identically and net reconciliation still converges
+// bit-for-bit. In headless/replay mode a pre-recorded `InputFrame` sequence is
+// fed instead of the DOM, so the input path is fully deterministic.
 // ---------------------------------------------------------------------------
-export class ScriptedInput {
+
+/** A `Windowish` host that produces input frames — live DOM or a headless fake. */
+export interface InputHost {
+  /** Optional live DOM source (undefined when replaying a recorded script). */
+  readonly source?: DomInputSource;
+  /** Sample the next frame (advanced by the caller's fixed-timestep index). */
+  sample(frame: number): InputFrame;
+  /** Tear down any DOM listeners. */
+  dispose(): void;
+}
+
+/**
+ * Build an `InputHost` bound to a live DOM target. Real keyboard/mouse events
+ * accumulate in the returned `source.state`; `sample(frame)` funnels them into a
+ * deterministic `InputFrame` via `collectFrame` and clears the per-frame edges.
+ */
+export function createDomInputHost(target: Windowish): InputHost {
+  const source = createInputSource(target);
+  return {
+    source,
+    sample(frame: number): InputFrame {
+      const f = collectFrame(source.state, frame);
+      source.state.beginFrame();
+      return f;
+    },
+    dispose(): void {
+      source.dispose();
+    },
+  };
+}
+
+/**
+ * Build an `InputHost` that replays a pre-recorded, deterministic list of
+ * `InputFrame`s (e.g. captured headlessly). Used by the replay test so no DOM
+ * is touched and the exact same frames drive the loop.
+ */
+export function createReplayInputHost(frames: readonly InputFrame[]): InputHost {
+  let i = 0;
+  return {
+    sample(frame: number): InputFrame {
+      const f = frames[i] ?? { frame, heldKeys: new Uint32Array(), pressedKeys: new Uint32Array(), releasedKeys: new Uint32Array(), mouseX: 0, mouseY: 0, mouseButtons: 0, mousePressed: 0, mouseReleased: 0, wheel: 0 };
+      i = Math.min(i + 1, frames.length);
+      return { ...f, frame };
+    },
+    dispose(): void {
+      /* no DOM to tear down */
+    },
+  };
+}
+
+/**
+ * Deterministic input driver. Wraps an `InputHost` and turns each fixed tick
+ * into the `Uint8Array` command payload the loop consumes. The entity index is
+ * the frame index modulo entity count; the impulse vector is drawn from a
+ * seeded `Rng` advanced by the number of currently-held keys (so identical
+ * frames ⇒ identical impulses ⇒ identical simulation). Every sampled frame is
+ * also pushed into an `InputBuffer` so the exact run can be replayed.
+ */
+export class DemoInput {
+  private readonly host: InputHost;
   private readonly rng: Rng;
   private readonly entityCount: number;
-  private tick = 0;
+  private readonly buffer = new InputBuffer(1 << 20);
+  private frame = 0;
 
-  constructor(seed: string, entityCount: number) {
+  constructor(host: InputHost, seed: string, entityCount: number) {
+    this.host = host;
     this.rng = new Rng(seed);
     this.entityCount = entityCount;
   }
 
+  /** The live DOM source (if any) for callers that want to introspect state. */
+  get source(): DomInputSource | undefined {
+    return this.host.source;
+  }
+
+  /** All sampled frames recorded so far, oldest first. */
+  recordedFrames(): readonly InputFrame[] {
+    return this.buffer.toArray();
+  }
+
   /** Advance one input tick and return the next command payload. */
   next(): Uint8Array {
-    const entity = this.tick % Math.max(1, this.entityCount);
+    const frame = this.frame++;
+    const f = this.host.sample(frame);
+    this.buffer.push(f);
+    // Drive the (still-seeded) Rng from the held-key set so the impulse vector
+    // is a pure function of the frame's input state, never of wall-clock time.
+    const heldN = f.heldKeys.length;
+    for (let k = 0; k < heldN; k++) this.rng.nextU64();
+    const entity = frame % Math.max(1, this.entityCount);
     const ix = this.rng.nextRange(-1, 1);
     const iy = this.rng.nextRange(0.5, 1.5); // bias upward so spheres keep hopping
     const iz = this.rng.nextRange(-1, 1);
-    this.tick += 1;
-    const f = new Float32Array([entity, ix, iy, iz]);
-    return new Uint8Array(f.buffer.slice(0));
+    const arr = new Float32Array([entity, ix, iy, iz]);
+    return new Uint8Array(arr.buffer.slice(0));
   }
 }
 
@@ -167,6 +274,10 @@ export interface DemoOptions {
   netEntities?: number;
   fixedDt?: number;
   gravity?: [number, number, number];
+  /** Provide a custom input host (e.g. a headless replay host). Defaults to a DOM source. */
+  inputHost?: InputHost;
+  /** When true, attach an optional @omega/replay `Recorder` that snapshots the physics world each tick. */
+  record?: boolean;
 }
 
 export interface ObservableBody {
@@ -185,10 +296,14 @@ export interface Demo {
   server: ReplicatedServer;
   client: ReplicatedClient;
   transport: LoopbackTransport;
-  input: ScriptedInput;
+  input: DemoInput;
+  /** Fixed-timestep scheduler from @omega/time-core (the tick source). */
+  scheduler: Scheduler;
+  /** Optional replay recorder (records a world snapshot per fixed tick). */
+  recorder?: Recorder;
   fixedDt: number;
   terrainSeed: string;
-  /** Advance the whole loop by one fixed tick. */
+  /** Advance the whole loop by one fixed tick (one scheduler sub-step). */
   step(): void;
   /** Deterministic, id-ordered draw list for the current view world. */
   drawList(): DrawItem[];
@@ -347,7 +462,23 @@ export function createDemo(opts: DemoOptions): Demo {
     client.onSnapshot({ tick, data });
   });
 
-  const input = new ScriptedInput(`${seed}:input`, netEntities);
+  // --- input-core: real DOM-bound input source (or a headless replay host) ---
+  // In a real browser `globalThis` is a `Windowish` with addEventListener, so we
+  // bind the live source. In a headless/node environment (the determinism test)
+  // there is no DOM, so we fall back to a deterministic empty replay host — the
+  // input path stays a pure function of the seeded Rng either way.
+  const g = globalThis as unknown as Windowish;
+  const inputHost =
+    opts.inputHost ?? (typeof g.addEventListener === 'function' ? createDomInputHost(g) : createReplayInputHost([]));
+  const input = new DemoInput(inputHost, `${seed}:input`, netEntities);
+
+  // --- time-core: fixed-timestep scheduler is the tick source ---
+  const scheduler = createScheduler({ dt: fixedDt, maxSubSteps: 5 });
+
+  // --- replay: optional recorder that snapshots the physics world each tick ---
+  const recorder = opts.record
+    ? new Recorder([PhysicsBody.name], { seedLow: seedToU64Low(seed), seedHigh: seedToU64High(seed) })
+    : undefined;
 
   // --- 4. Per-tick sync of the view world from physics + net server --------
   function syncView(): void {
@@ -383,20 +514,28 @@ export function createDemo(opts: DemoOptions): Demo {
     client,
     transport,
     input,
+    scheduler,
+    recorder,
     fixedDt,
     terrainSeed: seed,
     step(): void {
-      // (a) advance local physics one fixed step
-      coreWorld.step(fixedDt);
-      // (b) thin input -> client predicts, server simulates, snapshot reconciles
-      const payload = input.next();
-      const cmd = client.sendIntent(payload);
-      server.onCommand(cmd);
-      const snap = server.advance();
-      transport.send(encodeFrame(snap.tick, snap.data));
-      transport.tick();
-      // (c) mirror observable state into the view world for rendering
-      syncView();
+      // One fixed-timestep sub-step from @omega/time-core drives the tick. The
+      // scheduler owns the frame index; we do NOT read a wall clock here.
+      scheduler.step(fixedDt, () => {
+        // (a) advance local physics one fixed step
+        coreWorld.step(fixedDt);
+        // (b) input -> client predicts, server simulates, snapshot reconciles
+        const payload = input.next();
+        const cmd = client.sendIntent(payload);
+        server.onCommand(cmd);
+        const snap = server.advance();
+        transport.send(encodeFrame(snap.tick, snap.data));
+        transport.tick();
+        // (c) record an optional world snapshot for replay
+        if (recorder) recorder.recordFrame(coreWorld, scheduler.frame - 1, fixedDt);
+        // (d) mirror observable state into the view world for rendering
+        syncView();
+      });
     },
     drawList(): DrawItem[] {
       return extractDrawList(viewWorld);
@@ -457,6 +596,60 @@ export function runHeadless(
     physics: pack(demo.physicsPositions()),
     netServer: pack(demo.netPositionsServer()),
     netClient: pack(demo.netPositionsClient()),
+  };
+}
+
+/**
+ * Record a headless demo run into a deterministic @omega/replay `Recording` and
+ * return it (plus the final observable state). The recorder snapshots the
+ * physics world every fixed tick, so the exact same trajectory can be rebuilt
+ * from the recording alone.
+ */
+export function recordHeadless(
+  seed: string,
+  ticks: number,
+  opts: Partial<DemoOptions> = {},
+): { recording: Recording; result: HeadlessResult } {
+  const demo = createDemo({ seed, record: true, ...opts });
+  for (let t = 0; t < ticks; t++) demo.step();
+  const rec = demo.recorder?.toRecording();
+  if (!rec) throw new Error('recordHeadless: recorder was not attached');
+  const round = (n: number) => Math.round(n * 1e6) / 1e6;
+  const pack = (b: ObservableBody[]) => b.map((e) => [e.id, round(e.x), round(e.y), round(e.z)]);
+  return {
+    recording: rec,
+    result: {
+      physics: pack(demo.physicsPositions()),
+      netServer: pack(demo.netPositionsServer()),
+      netClient: pack(demo.netPositionsClient()),
+    },
+  };
+}
+
+/**
+ * Determinism proof for the replay path: feed the recorded world snapshots
+ * through `Playback` and return the observable state reconstructed at the final
+ * tick. Given the same `Recording`, `Playback` rebuilds the world to the exact
+ * same positions bit-for-bit as the live run (input→record→replay→play).
+ */
+export function replayHeadless(
+  recording: Recording,
+  ticks: number,
+): HeadlessResult {
+  const world = new CoreWorld();
+  const playback = new Playback(recording, world, [PhysicsBody.name]);
+  playback.playTo(ticks - 1);
+  const round = (n: number) => Math.round(n * 1e6) / 1e6;
+  const pack = (b: ObservableBody[]) => b.map((e) => [e.id, round(e.x), round(e.y), round(e.z)]);
+  const out: ObservableBody[] = [];
+  for (const id of world.store(PhysicsBody.name).keys()) {
+    const b = world.getComponent(PhysicsBody.name, id) as RigidBody | undefined;
+    if (b) out.push({ id, x: b.position.x, y: b.position.y, z: b.position.z });
+  }
+  return {
+    physics: pack(out),
+    netServer: [],
+    netClient: [],
   };
 }
 

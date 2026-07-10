@@ -11,6 +11,9 @@
       "path": "./packages/audio"
     },
     {
+      "path": "./packages/audio-spatial"
+    },
+    {
       "path": "./packages/ecs"
     },
     {

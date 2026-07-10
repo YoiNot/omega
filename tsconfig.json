@@ -59,6 +59,9 @@
       "path": "./packages/render"
     },
     {
+      "path": "./packages/render-pbr"
+    },
+    {
       "path": "./packages/render-ecs"
     },
     {

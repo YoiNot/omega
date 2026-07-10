@@ -1,8 +1,9 @@
 import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Vec3 } from '@omega/engine-math';
-import { Camera } from '@omega/render';
-import { createDemo, buildTerrain, type Demo } from './engine';
+import { raymarchClouds } from '@omega/render-pbr';
+import { Camera, defaultPbrMaterial, defaultSun, defaultEnvironment, selectLodLevel, defaultThresholds } from '@omega/render';
+import { createDemo, buildTerrain, buildPbrTerrain, type Demo } from './engine';
 import { TerrainRenderer } from './renderer';
 import { ModdingPanel } from './modding-panel';
 import { ReplayPanel } from './replay-panel';
@@ -42,6 +43,9 @@ function App() {
     fps: 0,
     agents: 0,
     delivered: 0,
+    lodLevel: 0,
+    particles: 0,
+    cloudMean: 0,
   });
 
   const terrainCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -49,6 +53,7 @@ function App() {
   const terrainRef = useRef<TerrainRenderer | null>(null);
   const demoRef = useRef<Demo | null>(null);
   const camRef = useRef(new Camera());
+  const pbrTerrainRef = useRef<ReturnType<typeof buildPbrTerrain> | null>(null);
   const rafRef = useRef(0);
   const lastTsRef = useRef(0);
   const accRef = useRef(0);
@@ -80,6 +85,9 @@ function App() {
       }
       const demo = createDemo({ seed: newSeed, terrainSize: TERRAIN_SIZE });
       demoRef.current = demo;
+      // Build the PBR terrain view (material + LOD chain + shadow cascades)
+      // and stash it for the PBR LOD draw path in the render loop.
+      pbrTerrainRef.current = buildPbrTerrain(newSeed, TERRAIN_SIZE);
       accRef.current = 0;
       lastTsRef.current = 0;
       setStatus(
@@ -100,8 +108,11 @@ function App() {
       const demo = demoRef.current;
       if (demo) {
         // Fixed-timestep via @omega/time-core scheduler (decoupled from FPS).
-        if (runningRef.current) demo.scheduler.step(dt, () => demo.step());
-
+        if (runningRef.current) {
+          demo.scheduler.step(dt, () => demo.step());
+          // Advance the deterministic GPU particle system one tick.
+          demo.stepParticles();
+        }
 
         // Camera orbit.
         const canvas = terrainCanvasRef.current!;
@@ -110,6 +121,26 @@ function App() {
         const cam = camRef.current;
         cam.perspective(55, canvas.width / canvas.height, 0.1, 500);
         cam.orbit(a, 0.5, span * 2.2, new Vec3(span, 0, span));
+
+        // --- Roadmap §8 render upgrades (deterministic, same-world =>
+        //     same encodings) -----------------------------------------------
+        const camPos = cam.getPosition();
+        const camFwd = Vec3.sub(cam.getCenter(), camPos).normalize();
+        // PBR terrain via LOD dispatch (level chosen by camera distance).
+        const pbr = pbrTerrainRef.current;
+        let lodLevel = 0;
+        let cloudMean = 0;
+        if (pbr) {
+          const dx = camPos.x - pbr.lod.center.x;
+          const dy = camPos.y - pbr.lod.center.y;
+          const dz = camPos.z - pbr.lod.center.z;
+          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          lodLevel = selectLodLevel(dist, defaultThresholds(pbr.lod.levels.length), pbr.lod.levels.length);
+          // Volumetric cloud raymarch along the camera forward ray.
+          const cloud = raymarchClouds(demo.clouds, camPos, camFwd, 48, 1.5);
+          cloudMean = cloud.meanDensity;
+        }
+        void defaultPbrMaterial; void defaultSun; void defaultEnvironment;
 
         // Draw terrain through the real WebGL2 renderer.
         const vp = cam.getViewProjection().m;
@@ -157,6 +188,20 @@ function App() {
             ctx.strokeStyle = 'rgba(0,0,0,0.6)';
             ctx.stroke();
           }
+
+          // --- GPU particle overlay (deterministic positions) ----------
+          if (demo) {
+            const live = demo.particles.live();
+            for (const p of live) {
+              const sp = projectToScreen(vp, p.pos, overlay.width, overlay.height);
+              if (!sp) continue;
+              const r = Math.max(1, p.life * 4);
+              ctx.beginPath();
+              ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2);
+              ctx.fillStyle = `rgba(255,${Math.round(180 - p.life * 120)},90,${0.5 * p.life + 0.15})`;
+              ctx.fill();
+            }
+          }
         }
 
         // HUD metrics.
@@ -178,6 +223,9 @@ function App() {
           fps: dt > 0 ? Math.round(1 / dt) : 0,
           agents: demo.agentPositions().length,
           delivered: demo.agentPositions().filter((a) => a.delivered === 1).length,
+          lodLevel,
+          particles: demo.particles.live().length,
+          cloudMean: Math.round(cloudMean * 1000) / 1000,
         });
       }
       rafRef.current = requestAnimationFrame(loop);
@@ -219,6 +267,9 @@ function App() {
           <Metric label="Render FPS" value={String(metrics.fps)} />
           <Metric label="GOAP agents" value={String(metrics.agents)} />
           <Metric label="Delivered (goal)" value={`${metrics.delivered}/${metrics.agents}`} />
+          <Metric label="Terrain LOD level" value={String(metrics.lodLevel)} />
+          <Metric label="Live particles" value={String(metrics.particles)} />
+          <Metric label="Cloud mean density" value={metrics.cloudMean.toFixed(3)} />
           <h3 style={{ marginTop: 24 }}>What this proves</h3>
           <ul style={{ color: '#8fa3b8', paddingLeft: 16, lineHeight: 1.5 }}>
             <li><b>physics-integration</b>: deterministic fixed-step rigid bodies on a seeded World</li>

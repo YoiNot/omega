@@ -21,6 +21,7 @@
     "@omega/net": "*",
     "@omega/net-replication": "*",
     "@omega/input-core": "*",
+    "@omega/modding": "*",
     "@omega/replay": "*",
     "@omega/time-core": "*",
     "react": "^18.3.1",

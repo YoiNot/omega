@@ -4,6 +4,7 @@ import { Vec3 } from '@omega/engine-math';
 import { Camera } from '@omega/render';
 import { createDemo, buildTerrain, type Demo } from './engine';
 import { TerrainRenderer } from './renderer';
+import { ModdingPanel } from './modding-panel';
 
 const TERRAIN_SIZE = 40;
 
@@ -212,7 +213,7 @@ function App() {
             <li><b>replay</b>: optional Recorder snapshots each tick; Playback rebuilds the world deterministically</li>
             <li>Headless determinism test: same seed → same end state; input→record→replay→play identity</li>
           </ul>
-          <h3 style={{ marginTop: 24 }}>What this proves</h3>
+          <ModdingPanel demoRef={demoRef} />
         </aside>
       </div>
     </div>

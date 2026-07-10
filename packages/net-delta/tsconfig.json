@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "references": [
+    { "path": "../ecs" },
+    { "path": "../net-replication" }
+  ],
+  "include": ["src/**/*.ts"]
+}

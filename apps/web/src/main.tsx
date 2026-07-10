@@ -85,7 +85,7 @@ function App() {
     });
   }
 
-  // Render + fixed-timestep loop.
+  // Render + fixed-timestep loop driving the demo (scheduler is the tick source).
   useEffect(() => {
     const overlay = overlayRef.current;
     if (!overlay) return;
@@ -95,17 +95,9 @@ function App() {
       lastTsRef.current = ts;
       const demo = demoRef.current;
       if (demo) {
-        // Fixed-timestep: advance sim in fixedDt chunks, decoupled from frame rate.
-        if (runningRef.current) {
-          accRef.current += dt;
-          const fixed = demo.fixedDt;
-          let steps = 0;
-          while (accRef.current >= fixed && steps < 5) {
-            demo.step();
-            accRef.current -= fixed;
-            steps++;
-          }
-        }
+        // Fixed-timestep via @omega/time-core scheduler (decoupled from FPS).
+        if (runningRef.current) demo.scheduler.step(dt, () => demo.step());
+
 
         // Camera orbit.
         const canvas = terrainCanvasRef.current!;
@@ -211,10 +203,16 @@ function App() {
             <li><b>net-replication</b>: server-authoritative sim over a LoopbackTransport; client prediction + reconciliation converges to the server bit-for-bit</li>
             <li>Headless determinism test: same seed → same end state</li>
           </ul>
-          <h3 style={{ marginTop: 24, color: '#7a6a3a' }}>TODO (replacement seam)</h3>
           <ul style={{ color: '#8fa3b8', paddingLeft: 16, lineHeight: 1.5 }}>
-            <li>input-core + replay are NOT merged yet — a thin ScriptedInput drives the loop; swap for the real drivers when they land</li>
+            <li><b>physics-integration</b>: deterministic fixed-step rigid bodies on a seeded World</li>
+            <li><b>render-ecs</b>: id-ordered draw list (cyan/orange = physics, magenta/green = net)</li>
+            <li><b>net-replication</b>: server-authoritative sim over a LoopbackTransport; client prediction + reconciliation converges to the server bit-for-bit</li>
+            <li><b>input-core</b>: live DOM input source → deterministic InputFrame → command payload</li>
+            <li><b>time-core</b>: fixed-timestep scheduler is the tick source (FPS-decoupled)</li>
+            <li><b>replay</b>: optional Recorder snapshots each tick; Playback rebuilds the world deterministically</li>
+            <li>Headless determinism test: same seed → same end state; input→record→replay→play identity</li>
           </ul>
+          <h3 style={{ marginTop: 24 }}>What this proves</h3>
         </aside>
       </div>
     </div>

@@ -10,8 +10,14 @@
   "references": [
     { "path": "../../packages/engine-math" },
     { "path": "../../packages/engine-core" },
+    { "path": "../../packages/ecs" },
     { "path": "../../packages/world-gen" },
+    { "path": "../../packages/physics" },
+    { "path": "../../packages/physics-integration" },
     { "path": "../../packages/render" },
+    { "path": "../../packages/render-ecs" },
+    { "path": "../../packages/net" },
+    { "path": "../../packages/net-replication" },
     { "path": "../../packages/sim" },
     { "path": "../../packages/save" }
   ],

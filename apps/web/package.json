@@ -12,10 +12,14 @@
   "dependencies": {
     "@omega/engine-math": "*",
     "@omega/engine-core": "*",
+    "@omega/ecs": "*",
     "@omega/world-gen": "*",
     "@omega/render": "*",
-    "@omega/sim": "*",
-    "@omega/save": "*",
+    "@omega/physics": "*",
+    "@omega/physics-integration": "*",
+    "@omega/render-ecs": "*",
+    "@omega/net": "*",
+    "@omega/net-replication": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

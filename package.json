@@ -11,7 +11,8 @@
     "packages/render-pbr",
     "packages/job",
     "packages/pool",
-    "packages/reflect"
+    "packages/reflect",
+    "packages/net-delta"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",

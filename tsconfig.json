@@ -32,6 +32,9 @@
       "path": "./packages/net"
     },
     {
+      "path": "./packages/net-replication"
+    },
+    {
       "path": "./packages/physics"
     },
     {

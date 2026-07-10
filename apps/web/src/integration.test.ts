@@ -13,7 +13,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { runHeadless, type HeadlessResult } from './engine';
+import {
+  runHeadless,
+  recordHeadless,
+  replayHeadless,
+  type HeadlessResult,
+} from './engine';
 
 function deepClone(r: HeadlessResult): HeadlessResult {
   return {
@@ -72,5 +77,21 @@ describe('apps/web deterministic integration loop', () => {
     for (let i = 0; i < 3; i++) {
       expect(runHeadless(SEED, TICKS)).toEqual(ref);
     }
+  });
+
+  it('input → record → replay → play yields identical physics world', () => {
+    const { recording, result } = recordHeadless(SEED, TICKS);
+    // Recording must capture one snapshot per fixed tick.
+    expect(recording.frames.length).toBe(TICKS);
+    // Rebuild the world deterministically from the recording alone.
+    const replayed = replayHeadless(recording, TICKS);
+    // The replayed physics world equals the live-recorded world bit-for-bit.
+    expect(replayed.physics).toEqual(result.physics);
+  });
+
+  it('two recordings from the same seed are byte-identical (reproducible record)', () => {
+    const a = recordHeadless(SEED, TICKS).recording;
+    const b = recordHeadless(SEED, TICKS).recording;
+    expect(b).toEqual(a);
   });
 });

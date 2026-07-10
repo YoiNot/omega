@@ -68,9 +68,6 @@
       "path": "./packages/time"
     },
     {
-      "path": "./packages/time-core"
-    },
-    {
       "path": "./packages/ui"
     },
     {

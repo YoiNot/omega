@@ -13,6 +13,8 @@
     "@omega/engine-math": "*",
     "@omega/engine-core": "*",
     "@omega/ecs": "*",
+    "@omega/ai-goap": "*",
+    "@omega/nav-core": "*",
     "@omega/world-gen": "*",
     "@omega/render": "*",
     "@omega/physics": "*",

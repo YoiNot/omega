@@ -35,6 +35,9 @@
       "path": "./packages/physics"
     },
     {
+      "path": "./packages/physics-integration"
+    },
+    {
       "path": "./packages/procgen"
     },
     {

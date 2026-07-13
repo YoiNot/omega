@@ -22,3 +22,9 @@ export {
   loadModManifest,
   manifestToCanonicalString,
 } from './serialize.js';
+export {
+  validateModManifest,
+  assertValidModManifest,
+  type ValidationError,
+  type ValidationResult,
+} from './validate.js';

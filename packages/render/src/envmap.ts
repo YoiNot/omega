@@ -1,5 +1,5 @@
 /**
- * @omega/render-ao — procedural, seed-deterministic environment map (IBL).
+ * @omega/render — procedural, seed-deterministic environment map (IBL).
  *
  * Image-Based Lighting normally needs an HDRI asset. We have a $0 budget and a
  * determinism contract, so instead we BAKE a small procedural sky+ground

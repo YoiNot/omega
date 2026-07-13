@@ -9,7 +9,6 @@
     "packages/*",
     "apps/*",
     "packages/render-pbr",
-    "packages/render-ao",
     "packages/job",
     "packages/pool",
     "packages/reflect",

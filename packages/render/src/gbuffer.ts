@@ -1,5 +1,5 @@
 /**
- * @omega/render-ao — minimal G-Buffer pass for AO/post-processing.
+ * @omega/render — minimal G-Buffer pass for AO/post-processing.
  *
  * The browser demo's TerrainRenderer (apps/web/src/renderer.ts) renders straight
  * to the default framebuffer with NO offscreen targets, and its PBR frag shader
@@ -131,16 +131,25 @@ export class GBufferPass {
     const fbo = gl.createFramebuffer()!;
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
 
+    // Prefer float targets (real GPUs) for precision; fall back to 8-bit when
+    // EXT_color_buffer_float is unavailable (e.g. SwiftShader headless CI).
+    const ext = gl.getExtension('EXT_color_buffer_float');
+    const useFloat = !!ext;
+    const normFmt = useFloat ? gl.RGBA16F : gl.RGBA8;
+    const depthFmt = useFloat ? gl.R16F : gl.R8;
+    const normType = useFloat ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
+    const depthType = useFloat ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
+
     const normalTex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, normalTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, normFmt, w, h, 0, gl.RGBA, normType, null);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, normalTex, 0);
 
     const depthTex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, depthTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, w, h, 0, gl.RED, gl.HALF_FLOAT, null);
+    gl.texImage2D(gl.TEXTURE_2D, 0, depthFmt, w, h, 0, gl.RED, depthType, null);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, depthTex, 0);

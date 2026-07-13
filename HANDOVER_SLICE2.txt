@@ -1,0 +1,108 @@
+================================================================
+HANDOVER — SLICE-SESSION (PROJECT OMEGA)
+für eine FRISCHE tmux-Pane. Du nimmst den Platz des Users ein.
+================================================================
+
+DU BIST die SLICE-SESSION in PROJECT OMEGA (deterministisches
+Browser-Game-Engine-Monorepo, npm workspaces + TS project references,
+ESM mit .js-Suffix-Imports).
+
+Der Main-Orchestrator koordiniert; DU baust den vollständigen Vertical
+Slice. Erstelle KEINE eigenen Subagents ohne dessen OK.
+
+----------------------------------------------------------------
+0. VERIFIZIERTER IST-STAND (real geprüft, nicht aus dem Gedächtnis)
+----------------------------------------------------------------
+- main @ 38a1b71 (HEAD). tsc=0, 48 Pakete, keine offenen PRs auf origin.
+- Roadmap §4–§17 als DONE/gemerged markiert (docs/ROADMAP.md).
+- WICHTIG: Ein passender Worktree + Branch existieren BEREITS:
+      /Users/yoi/omega/.worktrees/agent-slice2  (Branch feat/app-web-full)
+  Er ist CLEAN (0 ahead/behind origin/main, kein Diff). Nutze IHN.
+  Lege KEINEN neuen Worktree an (Briefing-Snippet würde fehlschlagen).
+
+----------------------------------------------------------------
+1. SETUP (Worktree ist schon da — nicht neu anlegen)
+----------------------------------------------------------------
+  cd /Users/yoi/omega/.worktrees/agent-slice2
+  git fetch origin main
+  git status                 # muss clean sein; Branch = feat/app-web-full @ 38a1b71
+  # Falls nicht clean:  git stash  bzw.  git checkout .   vor Start.
+
+----------------------------------------------------------------
+2. WAS SCHON VERDRAHTET IST (apps/web importiert bereits)
+----------------------------------------------------------------
+  replay, nav-core, world-gen, engine-core, modding, render, time-core,
+  input-core, ai-goap, save, render-ecs, physics-integration,
+  net-replication, render-pbr, physics, net, ecs
+  → Diese anfassen nur, wenn nötig. Nicht löschen/leeren.
+
+----------------------------------------------------------------
+3. ECHTE SLICE-ARBEIT — das fehlt noch in apps/web
+----------------------------------------------------------------
+  Einzuhängen in die time-core Fixed-Timestep-Schleife
+  (apps/web/src/engine.ts) — alle Pakete existieren bereits, deterministisch:
+
+  (a) Sim-Stack:
+        @omega/sim-env   (temp/humidity/pressure fields)
+        @omega/sim-fire  (deterministic cellular fire spread)
+        @omega/sim-eco   (per-cell ecosystem)
+        @omega/sim-econ  (regional resource economy)
+        @omega/sim-trade (inter-region trade market)
+  (b) Procgen-Welt (über bestehendes world-gen erweitern):
+        @omega/procgen   (planet / tectonics / hydrology / climate)
+        Seed → gleiche Welt (Determinismusvertrag).
+  (c) AI-Stack (ai-goap ist schon drin):
+        @omega/ai-goals, ai-memory, ai-personality,
+        ai-relationships, ai-learning
+        → Agenten mit Gedächtnis/Persönlichkeit/Beziehungen/Zielen.
+  (d) Net 2-Client:
+        @omega/net-delta (delta compression / interest management)
+        + bestehendes net-replication über loopback-Transport.
+        Demo mit 2 Clients (gleicher Seed, divergierende Inputs).
+  (e) Save/Replay/Modding:
+        @omega/save-incr (incremental snapshots) + replay (schon drin)
+        für vollständigen Sim-State-Record; modding (schon drin).
+  (f) Audio/Render:
+        @omega/audio-spatial + audio-playback in die Loop;
+        @omega/render-pbr (PBR/particles/clouds/LOD) schon teilweise drin.
+
+  DETERMINISMUS-VERTRAG: gleiche Seed → gleiches Spiel.
+  Kein Date.now() / Math.random() in der Sim.
+  Alle Zufälle über den seeded PRNG aus @omega/engine-math.
+
+----------------------------------------------------------------
+4. COMMIT-DISZIPLIN
+----------------------------------------------------------------
+  - Kleine ein-Concern-Commits, aussagekräftig (feat(app-web): …).
+  - KEIN "Co-Authored-By".
+
+----------------------------------------------------------------
+5. GATE (alle grün, BEVOR PR)
+----------------------------------------------------------------
+  npx tsc -b apps/web            # 0 errors
+  npx tsc -b                    # whole repo, 0 errors
+  npx vitest run --config vitest.apps.config.ts   # grün
+
+----------------------------------------------------------------
+6. DESTROY-DIFF-REGEL (vor PR ZWINGEND)
+----------------------------------------------------------------
+  git rebase origin/main
+  git diff --stat origin/main..HEAD
+  → KEINE der 48 Pakete in packages/ löschen/leeren, die DU nicht
+    selbst anfasst. Bei Verstoß:
+      git checkout origin/main -- packages/<fremd> && git commit --amend
+
+----------------------------------------------------------------
+7. PUSH / PR
+----------------------------------------------------------------
+  git push -u origin feat/app-web-full
+  gh pr create --base main --head feat/app-web-full \
+    --title "feat(app-web): full vertical slice"
+
+----------------------------------------------------------------
+8. ABSCHLUSS-MELDUNG an Orchestrator-User
+----------------------------------------------------------------
+  PR-URL + "GATE PASS"
+  (alle 3 Gate-Commands grün + Destroy-Diff sauber).
+
+================================================================

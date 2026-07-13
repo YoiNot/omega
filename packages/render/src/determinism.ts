@@ -1,5 +1,5 @@
 /**
- * @omega/render-ao — deterministic shader math helpers.
+ * @omega/render — deterministic shader math helpers.
  *
  * WHY THIS EXISTS (the project's core differentiator):
  * Our $0 multiplayer-lite pitch is "same seed => same world => same pixels".

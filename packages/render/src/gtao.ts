@@ -1,5 +1,5 @@
 /**
- * @omega/render-ao — Ground-Truth Ambient Occlusion (GTAO).
+ * @omega/render — Ground-Truth Ambient Occlusion (GTAO).
  *
  * Horizon-based AO per Jimenez et al. 2016 "Practical Realtime Strategies for
  * Accurate Indirect Occlusion" (Activision). We follow the XeGTAO lineage:

@@ -87,10 +87,11 @@ engineering increments.
 - [ADDED][DONE] `@omega/audio-playback` — WebAudio graph adapter, spatial mixdown matrix,
   deterministic buffer-based asset loader (PR #50).
 
-## 17. Modding — [ADDED][PARTIAL]
+## 17. Modding — [ADDED][DONE]
 - [ADDED][DONE] `@omega/modding` — deterministic rule/content patches (ModManifest, applyMod,
   load/save, PR #32); ModdingPanel UI in apps/web (PR #36).
-- [NEXT] manifest validation UI, content marketplace, sandboxing.
+- [ADDED][DONE] strict manifest validation, in-memory content marketplace adapter,
+  deterministic sandboxing (apply-in-isolation) (PR #51).
 
 ## 18–22. Multiplayer / Editors / Optimization / Polish / Vertical Slices — [FUTURE]
 - Listed for traceability; each is a major workstream begun after its dependencies land.

@@ -29,6 +29,8 @@ function deepClone(r: HeadlessResult): HeadlessResult {
     resources: r.resources.map((e) => [...e]),
     blockers: r.blockers.map((e) => [...e]),
     wanderers: r.wanderers.map((e) => [...e]),
+    players: r.players.map((e) => [...e]),
+    structures: r.structures.map((e) => [...e]),
   };
 }
 

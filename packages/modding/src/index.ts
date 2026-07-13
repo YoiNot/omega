@@ -35,3 +35,11 @@ export {
   type MarketplaceEntry,
   type MarketplaceListing,
 } from './marketplace.js';
+export {
+  sandboxMod,
+  EVERYWHERE,
+  type SandboxModManifest,
+  type SandboxChange,
+  type SandboxResult,
+  type Everywhere,
+} from './sandbox.js';

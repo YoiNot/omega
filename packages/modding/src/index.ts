@@ -22,3 +22,24 @@ export {
   loadModManifest,
   manifestToCanonicalString,
 } from './serialize.js';
+export {
+  validateModManifest,
+  assertValidModManifest,
+  type ValidationError,
+  type ValidationResult,
+} from './validate.js';
+export {
+  Marketplace,
+  loadLocalCatalog,
+  type ModCatalog,
+  type MarketplaceEntry,
+  type MarketplaceListing,
+} from './marketplace.js';
+export {
+  sandboxMod,
+  EVERYWHERE,
+  type SandboxModManifest,
+  type SandboxChange,
+  type SandboxResult,
+  type Everywhere,
+} from './sandbox.js';

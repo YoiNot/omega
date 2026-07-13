@@ -16,12 +16,15 @@
  * headlessly (no DOM) in the vitest suite.
  */
 
-import type { ModManifest, RulePatch, ContentPatch } from '@omega/modding';
+import type { ModManifest, RulePatch, ContentPatch, ModCatalog, MarketplaceListing } from '@omega/modding';
 import {
   applyMod,
   saveModManifest,
   loadModManifest,
   manifestToCanonicalString,
+  validateModManifest,
+  Marketplace,
+  loadLocalCatalog,
 } from '@omega/modding';
 import { snapshotWorld } from '@omega/save';
 import type { Demo } from './engine';
@@ -142,6 +145,41 @@ export function loadManifestFromBytes(bytes: Uint8Array): ModManifest {
   return loadModManifest(bytes);
 }
 
-// Re-export the public manifest types so UI code can reference them from one
-// module (apps/web import surface stays narrow).
+/**
+ * Strictly validate a manifest object (the same oracle used by the build gate).
+ * Returns the deterministic error list; the UI can render `errors` directly.
+ */
+export function validateManifestObj(input: unknown): { valid: boolean; errors: ReadonlyArray<{ code: string; path: string; message: string }> } {
+  return validateModManifest(input);
+}
+
+/**
+ * Browse a mod catalog deterministically (stable by id/version, never by mtime).
+ * Mirrors {@link Marketplace.list} but lives here so the panel imports one module.
+ */
+export function browseMods(catalog: ModCatalog): MarketplaceListing {
+  const marketplace = new Marketplace(catalog);
+  return marketplace.list();
+}
+
+/** Build a {@link Marketplace} from a JSON catalog blob (local stub, no server). */
+export function loadModCatalog(raw: unknown): Marketplace {
+  return loadLocalCatalog(raw);
+}
+
+// Re-export the public manifest types and the new modding tools so UI code can
+// reference them from one module (apps/web import surface stays narrow).
 export type { ModManifest, RulePatch, ContentPatch } from '@omega/modding';
+export {
+  validateModManifest,
+  Marketplace,
+  loadLocalCatalog,
+  sandboxMod,
+  EVERYWHERE,
+  type ModCatalog,
+  type MarketplaceListing,
+  type MarketplaceEntry,
+  type SandboxModManifest,
+  type SandboxResult,
+  type SandboxChange,
+} from '@omega/modding';

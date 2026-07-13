@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { Vec3 } from '@omega/engine-math';
 import { raymarchClouds } from '@omega/render-pbr';
 import { Camera, defaultPbrMaterial, defaultSun, defaultEnvironment, selectLodLevel, defaultThresholds } from '@omega/render';
+import { TerrainMaterial, TerrainSun } from './renderer';
 import { createDemo, buildTerrain, buildPbrTerrain, type Demo } from './engine';
 import { TerrainRenderer } from './renderer';
 import { ModdingPanel } from './modding-panel';
@@ -46,6 +47,14 @@ function App() {
     lodLevel: 0,
     particles: 0,
     cloudMean: 0,
+    // --- Colony-Sim (Step 1b) ---
+    veg: 0,
+    herbivores: 0,
+    carnivores: 0,
+    population: 0,
+    burning: 0,
+    tradeFlows: 0,
+    seed: 'omega-demo',
   });
 
   const terrainCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -83,6 +92,27 @@ function App() {
           indices: terrain.mesh.indices,
         });
       }
+      // Roadmap §8 NEXT: wire the real PBR (Cook-Torrance GGX) shader into the
+      // browser TerrainRenderer, driven by the same deterministic material +
+      // sun the engine's PBR pipeline uses. The rendered terrain is now a pure
+      // function of the seed (no clock, no RNG) — same seed ⇒ same pixels.
+      const mat: TerrainMaterial = {
+        albedo: [0.42, 0.46, 0.5],
+        roughness: 0.78,
+        metallic: 0.02,
+        emissive: [0, 0, 0],
+      };
+      const sunDef = defaultSun();
+      const env = defaultEnvironment();
+      const sun: TerrainSun = {
+        direction: sunDef.direction,
+        color: sunDef.color,
+        intensity: sunDef.intensity,
+        ambientTop: env.ambientTop,
+        ambientBottom: env.ambientBottom,
+        ambientIntensity: env.ambientIntensity,
+      };
+      terrainRef.current.enablePbr(mat, sun);
       const demo = createDemo({ seed: newSeed, terrainSize: TERRAIN_SIZE });
       demoRef.current = demo;
       // Build the PBR terrain view (material + LOD chain + shadow cascades)
@@ -90,6 +120,8 @@ function App() {
       pbrTerrainRef.current = buildPbrTerrain(newSeed, TERRAIN_SIZE);
       accRef.current = 0;
       lastTsRef.current = 0;
+      setSeed(newSeed);
+      setMetrics((m) => ({ ...m, seed: newSeed }));
       setStatus(
         `seeded "${newSeed}" — ${demo.physicsPositions().length} physics bodies, ` +
           `${demo.netPositionsServer().length} net entities, deterministic fixed-step`,
@@ -215,6 +247,17 @@ function App() {
             converged = false;
           }
         }
+        const eco = demo.simSpine.eco;
+        let veg = 0; let herb = 0; let carn = 0;
+        if (eco) {
+          for (let i = 0; i < eco.vegetation.length; i++) {
+            veg += eco.vegetation[i]!;
+            herb += eco.herbivores[i]!;
+            carn += eco.carnivores[i]!;
+          }
+          const n = eco.vegetation.length || 1;
+          veg /= n; herb /= n; carn /= n;
+        }
         setMetrics({
           physTick: demo.coreWorld.tick,
           netTick: demo.server.tick,
@@ -226,6 +269,14 @@ function App() {
           lodLevel,
           particles: demo.particles.live().length,
           cloudMean: Math.round(cloudMean * 1000) / 1000,
+          // --- Colony-Sim (Step 1b) ---
+          veg: Math.round(veg * 1000) / 1000,
+          herbivores: Math.round(herb * 1000) / 1000,
+          carnivores: Math.round(carn * 1000) / 1000,
+          population: demo.agentPositions().length + demo.wandererPositions().length,
+          burning: demo.simSpine.burning(),
+          tradeFlows: demo.simSpine.tradeFlows(),
+          seed: metrics.seed,
         });
       }
       rafRef.current = requestAnimationFrame(loop);
@@ -270,6 +321,15 @@ function App() {
           <Metric label="Terrain LOD level" value={String(metrics.lodLevel)} />
           <Metric label="Live particles" value={String(metrics.particles)} />
           <Metric label="Cloud mean density" value={metrics.cloudMean.toFixed(3)} />
+          <Metric label="Seed" value={metrics.seed} />
+          <h3 style={{ marginTop: 24 }}>Colony-Sim (procgen world)</h3>
+          <Metric label="Population (agents+wanderers)" value={String(metrics.population)} />
+          <Metric label="Vegetation (mean)" value={metrics.veg.toFixed(3)} />
+          <Metric label="Herbivores (mean)" value={metrics.herbivores.toFixed(3)} />
+          <Metric label="Carnivores (mean)" value={metrics.carnivores.toFixed(3)} />
+          <Metric label="Burning cells" value={String(metrics.burning)} />
+          <Metric label="Trade flows" value={String(metrics.tradeFlows)} />
+          <ColonyAgentPanel demoRef={demoRef} />
           <h3 style={{ marginTop: 24 }}>What this proves</h3>
           <ul style={{ color: '#8fa3b8', paddingLeft: 16, lineHeight: 1.5 }}>
             <li><b>physics-integration</b>: deterministic fixed-step rigid bodies on a seeded World</li>
@@ -301,6 +361,43 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid #131c27' }}>
       <span style={{ color: '#5b6b7d' }}>{label}</span>
       <span>{value}</span>
+    </div>
+  );
+}
+
+/**
+ * Colony-Sim agent roster: each agent's deterministic persona (traits), its
+ * current chained goal, and its best ally in the shared social network. This
+ * is the §14 AI-stack made visible — the same data that proves the engine's
+ * determinism, surfaced for the build-in-public demo (screenshot/recordable).
+ */
+function ColonyAgentPanel({ demoRef }: { demoRef: React.MutableRefObject<Demo | null> }) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 500);
+    return () => clearInterval(id);
+  }, []);
+  const demo = demoRef.current;
+  if (!demo) return <div style={{ color: '#5b6b7d', fontSize: 11 }}>no colony yet</div>;
+  const views = demo.aiStackViews();
+  void tick;
+  return (
+    <div style={{ marginTop: 10 }}>
+      {views.map((v) => {
+        const ally = demo.bestAlly(v.entity);
+        const traits = Object.entries(v.traits)
+          .map(([k, val]) => `${k[0]}:${(val as number).toFixed(2)}`)
+          .join(' ');
+        return (
+          <div key={v.entity} style={{ padding: '3px 0', borderBottom: '1px solid #131c27', fontSize: 11 }}>
+            <div style={{ color: '#d8e0ea' }}>
+              agent {v.entity} · goal <b style={{ color: '#7fd0ff' }}>{v.goal ?? '—'}</b>
+            </div>
+            <div style={{ color: '#8fa3b8' }}>{traits}</div>
+            <div style={{ color: '#8fa3b8' }}>ally: {ally ?? '—'} · mem:{v.memoryCount}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }

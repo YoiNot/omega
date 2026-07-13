@@ -11,6 +11,8 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@omega/engine-math": "*"
+    "@omega/engine-math": "*",
+    "@omega/engine-core": "*",
+    "@omega/world-gen": "*"
   }
 }

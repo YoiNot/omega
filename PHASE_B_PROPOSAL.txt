@@ -1,0 +1,121 @@
+================================================================
+PROJECT OMEGA — PHASE B PROPOSAL (§18–§22)
+abgeleitet aus Demo-Stand nach PR #53 (full vertical slice, main @ 5958376)
+Orchestrator-Session, erstellt 2026-07-13
+================================================================
+
+BINDENDE CONSTRAINTS (User, nicht Engine-Brief):
+  C1 weak HW        → alles muss auf dem Laptop laufen / aufzeichbar sein
+  C2 no budget      → kein Dedicated-Server, kein Hosting-Geld, keine Paid-Tools
+  C3 0 followers    → Reichweite nur organisch/teilbar, nicht gekauft
+  C4 build in public → Fortschritt muss sichtbar/teilbar sein (Seed/Screenshot/Clip)
+  C5 real business  → Reichweite → Audience → Game | open-core Engine | Marketplace-Take
+  C6 laptop-sized   → Scope solo tractable
+
+REICHWEITE-ACHSE (R) und KOSTEN/INFRA-ACHSE (C) je Thema:
+  §18 Multiplayer  R=HOCH  C=SCHLECHT (Server/Hosting/Ops)
+  §19 Editors      R=MITTEL C=HOCH (UI-Last, braucht Audience)
+  §20 Optimization R=NULL   C=unsichtbar, aber Überlebens-Bedingung (weak HW)
+  §21 Polish       R=HOCH  C=NIEDRIG (PBR in echten Renderer, §8 NEXT)
+  §22 V.Slices     R=HOCH  C=NIEDRIG–MITTEL (Content aus Systemen)
+
+================================================================
+EMPFOHLENE REIHENFOLGE  (vom User mit "a" bestätigt)
+================================================================
+  SCHRITT 1 → §22 + §21  : EIN kohärentes, hübsches, teilbares Szenario
+  SCHRITT 2 → §20        : job system + mehr LOD, gezielt für weak HW
+  SCHRITT 3 → §18 ($0)   : Same-Seed + Replay-Sharing, KEIN Server
+  SCHRITT 4 → §18 Server + §19 : DEFER (erst bei ~Dutzende Follower)
+
+================================================================
+SCHRITT 1 — §22 + §21: "Colony-Sim" auf procgen-Planet
+================================================================
+STATUS USER-WAHL (b): nicht explizit gewählt → EMPFEHLUNG ANGEWENDET.
+Kandidaten waren:
+  - Colony-Sim (sim-eco + ai-goals + ai-relationships + ai-personality)
+  - Trade-Route (sim-econ + sim-trade + net-delta 2-Client)   [= Step 3-Nähe]
+  - Wildfire-Response (sim-fire + sim-env + ai-goap)
+
+GEWÄHLT: COLONY-SIM.
+Begründung (R/C gegen C1–C6):
+  - R=HOCH: lebendige, deterministische Welt = täglich postbarer Clip.
+  - Zeigt etwas, das KEIN anderes Engine-Demo zeigt: AI mit Persönlichkeit
+    + Beziehungen + Zielen auf einer procgen-Welt (Unfair-Advantage).
+  - C=NIEDRIG: nutzt die Phase-A-Systeme (sim-eco/ai-stack/ai-goals/
+    ai-relationships/procgen), braucht kein neues Infra.
+  - §21 greift mit: PBR-SHADER in den echten Browser-TerrainRenderer
+    verdrahten (ROADMAP §8 NEXT: legacy gradient läuft noch im Demo).
+    Macht Screenshots/Clips teilbar + hübsch → Reach.
+
+Was zu bauen ist (Scope):
+  - Ein Szenario-Modul in apps/web (scenario: "colony"), das:
+      * procgen-Welt (planet/tectonics/hydrology/climate) seeded erzeugt
+      * sim-eco Felder (Ressourcen/Wachstum) tickt
+      * N Agenten mit ai-goals + ai-personality + ai-relationships +
+        ai-memory (ai-goap/ai-learning schon drin) — sichtbar interagieren
+      * render-pbr Terrain + Agenten (PBR in echten Renderer, §8 NEXT)
+      * Replay/Seed-Export für build-in-public
+  - Ein UI-Panel "Colony HUD": tick count, population, relations-graph,
+    seed-anzeige (für Screenshots).
+  - Determinismusvertrag: gleiche Seed → gleiche Kolonie (Test in
+    full-slice.test.ts-Stil).
+
+Business-Advance: sichtbarer, teilbarer Loop → erste Follower →
+feed für C5. $0 (C2). Läuft lokal (C1).
+
+================================================================
+SCHRITT 2 — §20: job system + LOD für weak HW
+================================================================
+STATUS: unsichtbar, aber zwingend.
+Begründung:
+  - sim + AI + procgen ist SCHWER. Auf weak HW tickt der Step-1-Slice
+    evtl. nicht in Echtzeit → du kannst nichts aufnehmen/clippen.
+  - ROADMAP §4 NEXT: job system (Web Workers + SharedArrayBuffer),
+    §8 NEXT: weitere LOD-Tiers.
+  - Build-in-public-Winkel: "Engine läuft auf einem Laptop ohne GPU".
+Scope:
+  - @omega/job: ECS-Systeme in Worker-Pools offloaden (deterministisch:
+    Worker-Reihenfolge fixed, keine Race).
+  - Weitere render-pbr LOD-Tiers für große procgen-Welten.
+  - profiler/fuzz (schon vorhanden) nutzen, um Tick-Budget zu zeigen.
+C-Bezug: C1 (weak HW Überlebens-Bedingung), C2 ($0), C6 (laptop-sized).
+Kein Reichweiten-Gewinn — VORBEDINGUNG.
+
+================================================================
+SCHRITT 3 — §18 ($0): Same-Seed + Replay-Sharing
+================================================================
+STATUS USER-WAHL (c): nicht gewählt → EMPFEHLUNG ANGEWENDET = kein früher Server.
+Begründung:
+  - §18 echter Server (WebSocket/WebRTC, server-authoritative) erfordert
+    Hosting + Ops → C2 verletzt (kein Budget), C3 nützt nichts bei 0 Followern.
+  - Du hast DETERMINISMUS. Same seed → same world ist ein $0-"Multiplayer":
+    Leute teilen Seed + Replay-File, reproduzieren deine Welt LOKAL.
+  - Das ist der stärkste, kostenlose Reach-Hook: "Post einen Seed, deine
+    Follower reproduzieren exakt deine Welt."
+Scope:
+  - Seed-Share-UI in apps/web (Copy Seed / Paste Seed → exakte Welt).
+  - Replay-Export/-Import (replay schon drin) für "gleiche Colonie teilen".
+  - Net-Doku: wie 2 Clients SAME SEED + unterschiedliche Inputs replizieren
+    (net-replication loopback schon da; kein echter Transport nötig).
+C-Bezug: C2 ($0), C3 (organisch teilbar), C4 (build in public), C5 (Reach→Audience).
+
+================================================================
+SCHRITT 4 — §18 Server + §19 Editors : DEFER
+================================================================
+Bedingung: erst wenn ~Dutzende Follower da sind, die content wollen /
+Multiplayer verlangen.
+  - §18 realer Server: erst bei Audience, die Hosting rechtfertigt.
+  - §19 Editors: hängt am Modding-Marketplace (§17, schon da). Wertvoll
+    erst wenn Leute content editieren wollen.
+Wird NICHT vor Step 1–3 angefasst.
+
+================================================================
+WAS ALS NÄCHSTES (Go-Ahead nötig — Build, kein reiner Vorschlag)
+================================================================
+Step 1 (Colony-Sim) ist ein echter Build in apps/web → braucht wie Phase A
+einen Handover + frischen Worktree + Slice-Session (User startet Pane).
+Voraussetzung: User-Go-Ahead ("ja, Step 1 bauen").
+Dann: Handover-Datei schreiben (analog HANDOVER_SLICE2.txt), User startet
+Pane, Slice-Session baut Colony-Sim, Gate = tsc -b + vitest.apps + Destroy-Diff.
+
+================================================================

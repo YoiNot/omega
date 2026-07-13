@@ -15,7 +15,17 @@
  *     stays a pure function of the seed (matching the engine's determinism
  *     contract). The PBR/Lambert BRDF math mirrors `@omega/render-pbr`'s
  *     `brdf.ts` so the browser demo and the Node tests agree.
+ *
+ *   As of this revision the PBR path is MULTI-PASS: a G-Buffer (depth+normal)
+ *   feeds GTAO (Ground-Truth Ambient Occlusion, `@omega/render`), whose AO
+ *   texture is composited into the PBR fragment shader alongside a
+ *   seed-deterministic IBL env map (`@omega/render` `bakeEnvMap`). The result
+ *   is real screen-space ambient occlusion + image-based ambient — no longer
+ *   the "early-2000s OpenGL" look of flat lambert.
  */
+
+import { GBufferPass, GTAO_FRAG, FULLSCREEN_VERT, bakeEnvMap } from '@omega/render';
+import type { GLScene as GBufferScene } from '@omega/render';
 
 /** PBR surface material fed to the terrain shader (linear RGB, [0,1]). */
 export interface TerrainMaterial {
@@ -50,9 +60,24 @@ void main() {
   gl_Position = uViewProj * vec4(aPos, 1.0);
 }`;
 
-// PBR vertex shader is identical to the legacy one (positions/normals/colors
-// are uploaded either way; colors are ignored by the PBR frag shader).
-const VERT_PBR = VERT;
+// PBR vertex shader: also emit view-space position for the G-Buffer path
+// (needed to reconstruct the view vector in the PBR frag for correct specular).
+const VERT_PBR = `#version 300 es
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec4 aColor;
+uniform mat4 uViewProj;
+uniform mat4 uView;        // view matrix, to get view-space position
+out vec3 vNormal;
+out vec3 vViewPos;
+out vec4 vColor;
+void main() {
+  vNormal = aNormal;
+  vColor = aColor;
+  vec4 viewPos = uView * vec4(aPos, 1.0);
+  vViewPos = viewPos.xyz;
+  gl_Position = uViewProj * vec4(aPos, 1.0);
+}`;
 
 const FRAG = `#version 300 es
 precision highp float;
@@ -67,9 +92,12 @@ void main() {
 
 // Cook-Torrance GGX metallic-roughness BRDF (deterministic). Mirrors the
 // math in @omega/render-pbr/src/brdf.ts so the browser render matches Node.
+// Now MULTI-PASS: G-Buffer (depth+normal) feeds GTAO, which yields an AO
+// texture composited here. IBL comes from a seed-deterministic env map.
 const FRAG_PBR = `#version 300 es
 precision highp float;
 in vec3 vNormal;
+in vec3 vViewPos;   // view-space position (from G-Buffer path)
 in vec4 vColor;
 out vec4 fragColor;
 
@@ -81,8 +109,10 @@ uniform vec3 uSunDir;     // light travel direction (sun -> surface)
 uniform vec3 uSunColor;
 uniform float uSunIntensity;
 uniform vec3 uAmbTop;
-uniform vec3 uAmbBottom;
 uniform float uAmbIntensity;
+uniform sampler2D uAO;    // GTAO result (R channel)
+uniform vec3 uIBLTop;     // env-map up radiance (linear)
+uniform vec3 uIBLGround;  // env-map down radiance (linear)
 
 const float PI = 3.141592653589793;
 
@@ -106,8 +136,10 @@ vec3 fresnelSchlick(float cosT, vec3 f0) {
 
 void main() {
   vec3 N = normalize(vNormal);
-  vec3 V = vec3(0.0, 1.0, 0.0); // terrain-locked view approximation (top-down orbit)
-  vec3 L = normalize(-uSunDir); // direction TO the sun
+  // Reconstruct a stable view vector from the G-Buffer view-space position
+  // (the old code hard-coded V=(0,1,0), which disabled specular at grazing).
+  vec3 V = normalize(-vViewPos);
+  vec3 L = normalize(-uSunDir);
   vec3 H = normalize(V + L);
 
   float NdotL = max(dot(N, L), 0.0);
@@ -123,11 +155,15 @@ void main() {
   vec3 diffuse = kd * uAlbedo / PI;
   vec3 direct = (diffuse + spec) * uSunColor * uSunIntensity * NdotL;
 
-  // Hemisphere ambient (deterministic blend by normal.y).
+  // Hemisphere ambient from the procedural env map (IBL approximation).
   float up = N.y * 0.5 + 0.5;
-  vec3 ambient = mix(uAmbBottom, uAmbTop, up) * uAmbIntensity * uAlbedo;
+  vec3 ambient = mix(uIBLGround, uIBLTop, up) * uAmbIntensity * uAlbedo;
 
-  vec3 color = direct + ambient + uEmissive;
+  // GTAO: sample the AO texture at this fragment's UV.
+  float ao = texture(uAO, gl_FragCoord.xy / vec2(textureSize(uAO, 0))).r;
+  ao = clamp(ao, 0.0, 1.0);
+
+  vec3 color = (direct + ambient) * ao + uEmissive;
   fragColor = vec4(color, 1.0);
 }`;
 
@@ -169,6 +205,16 @@ export class TerrainRenderer {
   private legacyProgram: WebGLProgram;
   /** PBR (Cook-Torrance GGX) program — built when a material is supplied. */
   private pbrProgram: WebGLProgram | null = null;
+  /** G-Buffer pass (depth + view-space normal) feeding GTAO. */
+  private gbufferPass: GBufferPass | null = null;
+  /** GTAO output (AO texture + its FBO), produced each frame. */
+  private aoFbo: WebGLFramebuffer | null = null;
+  private aoTex: WebGLTexture | null = null;
+  /** GTAO fullscreen-quad pass program + VAO. */
+  private aoProgram: WebGLProgram | null = null;
+  private aoVao: WebGLVertexArrayObject | null = null;
+  /** Seed-deterministic IBL env map (procedural, no asset). */
+  private envIrradiance: [number, number, number] = [0.3, 0.35, 0.45];
   /** One VAO per LOD level (fine → coarse → coarsest). Index 0 is active by default. */
   private lodVaos: WebGLVertexArrayObject[] = [];
   private lodIndexCounts: number[] = [];
@@ -176,6 +222,7 @@ export class TerrainRenderer {
   private viewProjLoc: WebGLUniformLocation | null;
   private pbrLoc: {
     viewProj: WebGLUniformLocation | null;
+    view: WebGLUniformLocation | null;
     albedo: WebGLUniformLocation | null;
     roughness: WebGLUniformLocation | null;
     metallic: WebGLUniformLocation | null;
@@ -184,10 +231,14 @@ export class TerrainRenderer {
     sunColor: WebGLUniformLocation | null;
     sunIntensity: WebGLUniformLocation | null;
     ambTop: WebGLUniformLocation | null;
-    ambBottom: WebGLUniformLocation | null;
     ambIntensity: WebGLUniformLocation | null;
+    ao: WebGLUniformLocation | null;
+    ibTop: WebGLUniformLocation | null;
+    ibGround: WebGLUniformLocation | null;
   } | null = null;
   private usePbr = false;
+  /** Constructor scene (kept for the G-Buffer pass geometry). */
+  private lodScene: GLScene | null = null;
 
   constructor(canvas: HTMLCanvasElement, scene: GLScene) {
     const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true });
@@ -201,6 +252,7 @@ export class TerrainRenderer {
     this.lodVaos = [this.buildVao(scene)];
     this.lodIndexCounts = [scene.indices.length];
     this.lodLevel = 0;
+    this.lodScene = scene;
   }
 
   /** Build a VAO for one LOD level's geometry. */
@@ -258,6 +310,7 @@ export class TerrainRenderer {
       this.pbrProgram = link(gl, vs, fs);
       this.pbrLoc = {
         viewProj: gl.getUniformLocation(this.pbrProgram, 'uViewProj'),
+        view: gl.getUniformLocation(this.pbrProgram, 'uView'),
         albedo: gl.getUniformLocation(this.pbrProgram, 'uAlbedo'),
         roughness: gl.getUniformLocation(this.pbrProgram, 'uRoughness'),
         metallic: gl.getUniformLocation(this.pbrProgram, 'uMetallic'),
@@ -266,10 +319,48 @@ export class TerrainRenderer {
         sunColor: gl.getUniformLocation(this.pbrProgram, 'uSunColor'),
         sunIntensity: gl.getUniformLocation(this.pbrProgram, 'uSunIntensity'),
         ambTop: gl.getUniformLocation(this.pbrProgram, 'uAmbTop'),
-        ambBottom: gl.getUniformLocation(this.pbrProgram, 'uAmbBottom'),
         ambIntensity: gl.getUniformLocation(this.pbrProgram, 'uAmbIntensity'),
+        ao: gl.getUniformLocation(this.pbrProgram, 'uAO'),
+        ibTop: gl.getUniformLocation(this.pbrProgram, 'uIBLTop'),
+        ibGround: gl.getUniformLocation(this.pbrProgram, 'uIBLGround'),
       };
     }
+    // Build the G-Buffer + GTAO passes once (idempotent). GBufferPass owns its
+    // geometry VAO, so we feed it the level-0 scene from the constructor.
+    if (!this.gbufferPass) {
+      const w = gl.canvas.width || 1, h = gl.canvas.height || 1;
+      const scene: GBufferScene = {
+        positions: this.lodScene?.positions ?? new Float32Array(),
+        normals: this.lodScene?.normals ?? new Float32Array(),
+        indices: this.lodScene?.indices ?? new Uint32Array(),
+      };
+      this.gbufferPass = new GBufferPass(gl, scene, w, h);
+      // AO target + fullscreen-quad pass (GTAO_FRAG consumes G-Buffer outputs).
+      this.aoFbo = gl.createFramebuffer()!;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.aoFbo);
+      this.aoTex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, this.aoTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.aoTex, 0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      const avs = compile(gl, gl.VERTEX_SHADER, FULLSCREEN_VERT);
+      const afs = compile(gl, gl.FRAGMENT_SHADER, GTAO_FRAG);
+      this.aoProgram = link(gl, avs, afs);
+      this.aoVao = gl.createVertexArray()!;
+      gl.bindVertexArray(this.aoVao);
+      const qb = gl.createBuffer()!;
+      gl.bindBuffer(gl.ARRAY_BUFFER, qb);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+      gl.bindVertexArray(null);
+    }
+    // Procedural, seed-deterministic IBL env map (no HDRI asset, $0).
+    const seed = Math.floor(sun.ambientTop[0] * 100 + sun.ambientBottom[0] * 7 + sun.intensity * 3);
+    const env = bakeEnvMap(seed);
+    this.envIrradiance = env.irradiance;
     this.usePbr = true;
     const p = this.pbrProgram!;
     const loc = this.pbrLoc!;
@@ -282,8 +373,9 @@ export class TerrainRenderer {
     if (loc.sunColor) gl.uniform3fv(loc.sunColor, sun.color);
     if (loc.sunIntensity) gl.uniform1f(loc.sunIntensity, sun.intensity);
     if (loc.ambTop) gl.uniform3fv(loc.ambTop, sun.ambientTop);
-    if (loc.ambBottom) gl.uniform3fv(loc.ambBottom, sun.ambientBottom);
     if (loc.ambIntensity) gl.uniform1f(loc.ambIntensity, sun.ambientIntensity);
+    if (loc.ibTop) gl.uniform3fv(loc.ibTop, this.envIrradiance);
+    if (loc.ibGround) gl.uniform3fv(loc.ibGround, [this.envIrradiance[0] * 0.5, this.envIrradiance[1] * 0.5, this.envIrradiance[2] * 0.5]);
   }
 
   /** Switch back to the legacy lambert gradient path. */
@@ -310,23 +402,69 @@ export class TerrainRenderer {
     }
   }
 
-  render(viewProj: Float32Array): void {
+  render(viewProj: Float32Array, view?: Float32Array): void {
     const gl = this.gl;
-    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+    const w = gl.canvas.width, h = gl.canvas.height;
+    gl.viewport(0, 0, w, h);
     gl.clearColor(0.04, 0.06, 0.1, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.DEPTH_TEST);
-    if (this.usePbr && this.pbrProgram) {
+
+    if (this.usePbr && this.pbrProgram && this.gbufferPass && this.aoProgram && this.aoVao && this.aoTex) {
+      const model = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+      // --- Pass 1: G-Buffer (depth + view-space normal) into FBO ---
+      this.gbufferPass.render(viewProj, model);
+      const gb = this.gbufferPass.targets;
+
+      // --- Pass 2: GTAO -> AO texture (reads G-Buffer normal/depth) ---
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.aoFbo);
+      gl.viewport(0, 0, w, h);
+      gl.clearColor(1, 1, 1, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.disable(gl.DEPTH_TEST);
+      gl.useProgram(this.aoProgram);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, gb.normalTex);
+      gl.uniform1i(gl.getUniformLocation(this.aoProgram, 'uNormal'), 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, gb.depthTex);
+      gl.uniform1i(gl.getUniformLocation(this.aoProgram, 'uDepth'), 1);
+      gl.uniform2f(gl.getUniformLocation(this.aoProgram, 'uResolution'), w, h);
+      gl.uniform1f(gl.getUniformLocation(this.aoProgram, 'uRadius'), 0.5);
+      gl.uniform1f(gl.getUniformLocation(this.aoProgram, 'uFalloff'), 0.2);
+      gl.uniform1i(gl.getUniformLocation(this.aoProgram, 'uSamples'), 8);
+      gl.uniform1i(gl.getUniformLocation(this.aoProgram, 'uSlices'), 16);
+      gl.bindVertexArray(this.aoVao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.bindVertexArray(null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.enable(gl.DEPTH_TEST);
+
+      // --- Pass 3: PBR composite (terrain) with AO * IBL ---
+      gl.viewport(0, 0, w, h);
+      gl.clearColor(0.04, 0.06, 0.1, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.enable(gl.DEPTH_TEST);
       gl.useProgram(this.pbrProgram);
       const loc = this.pbrLoc!;
       if (loc.viewProj) gl.uniformMatrix4fv(loc.viewProj, false, viewProj);
+      if (loc.view) gl.uniformMatrix4fv(loc.view, false, view ?? viewProj);
+      // Bind GTAO result to uAO (texture unit 0).
+      if (loc.ao) {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.aoTex);
+        gl.uniform1i(loc.ao, 0);
+      }
+      gl.bindVertexArray(this.lodVaos[this.lodLevel]!);
+      gl.drawElements(gl.TRIANGLES, this.lodIndexCounts[this.lodLevel] ?? 0, gl.UNSIGNED_INT, 0);
+      gl.bindVertexArray(null);
     } else {
       gl.useProgram(this.legacyProgram);
       if (this.viewProjLoc) gl.uniformMatrix4fv(this.viewProjLoc, false, viewProj);
+      gl.bindVertexArray(this.lodVaos[this.lodLevel]!);
+      gl.drawElements(gl.TRIANGLES, this.lodIndexCounts[this.lodLevel] ?? 0, gl.UNSIGNED_INT, 0);
+      gl.bindVertexArray(null);
     }
-    gl.bindVertexArray(this.lodVaos[this.lodLevel]!);
-    gl.drawElements(gl.TRIANGLES, this.lodIndexCounts[this.lodLevel] ?? 0, gl.UNSIGNED_INT, 0);
-    gl.bindVertexArray(null);
   }
 }
 

@@ -4,6 +4,10 @@
     "outDir": "./dist",
     "rootDir": "./src"
   },
-  "references": [{ "path": "../engine-math" }],
+  "references": [
+    { "path": "../engine-math" },
+    { "path": "../engine-core" },
+    { "path": "../world-gen" }
+  ],
   "include": ["src/**/*.ts"]
 }

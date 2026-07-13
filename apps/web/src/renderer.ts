@@ -190,7 +190,7 @@ export class TerrainRenderer {
   private usePbr = false;
 
   constructor(canvas: HTMLCanvasElement, scene: GLScene) {
-    const gl = canvas.getContext('webgl2');
+    const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true });
     if (!gl) throw new Error('WebGL2 not supported in this browser');
     this.gl = gl;
     const vs = compile(gl, gl.VERTEX_SHADER, VERT);

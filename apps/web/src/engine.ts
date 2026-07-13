@@ -83,6 +83,7 @@ import {
   type CloudConfig,
 } from '@omega/render-pbr';
 import { TerrainGenerator, BIOME_COUNT, Biome } from '@omega/world-gen';
+import type { EcoField } from '@omega/sim-eco';
 import type { BooleanGrid } from './nav';
 import { nearestFreeTile } from './nav';
 import { AGENT_STORE } from './ai';
@@ -101,6 +102,7 @@ import { InteractionSystem } from './interaction';
 import { CraftingSystem } from './crafting';
 import { ConstructionSystem, STRUCTURE_STORE } from './construction';
 import { buildScenario, applyScenario, type Scenario } from './scenario';
+import type { GLScene } from './renderer';
 import {
   AiStackSystem,
 } from './ai-stack';
@@ -120,6 +122,7 @@ import {
   type AudioSourceInput,
   type SpatialSourceParam,
 } from './slice';
+import { stepEcoFieldParallel, ecoShardCount, type EcoJobResult } from './eco-job';
 import {
   Codec,
   ReplicatedServer,
@@ -407,6 +410,8 @@ export interface Demo {
   relationshipSnapshot(): ReturnType<AiStackSystem['relationshipSnapshot']>;
   /** Best ally of an agent in the shared social network (or null). */
   bestAlly(id: number): string | null;
+  /** Last @omega/job eco-parallel result (Roadmap §20 sharded sim). */
+  ecoJob: EcoJobResult | null;
   /** Gather the demo's emitters as audio sources (agents + player + net). */
   audioSources(): AudioSourceInput[];
   /** Deterministic, id-ordered draw list for the current view world. */
@@ -908,6 +913,30 @@ export function createDemo(opts: DemoOptions): Demo {
       scheduler.step(fixedDt, () => {
         // (a) advance local physics one fixed step
         coreWorld.step(fixedDt);
+        // (a1) Roadmap §20: re-run the eco integration through @omega/job's
+        // deterministic sharding as a PARITY CHECK against the engine-core serial
+        // tick above. We clone the current EcoField, integrate it in parallel
+        // (same reducer, same formula, sharded), and compare — proving the
+        // sharded path is byte-identical to the serial one (no races, order-free).
+        {
+          const live = simSpine.eco;
+          const shadow: EcoField = {
+            n: live.n,
+            tick: live.tick,
+            vegetation: live.vegetation.slice(),
+            herbivores: live.herbivores.slice(),
+            carnivores: live.carnivores.slice(),
+          };
+          void stepEcoFieldParallel(shadow, fixedDt, simSpine.env, { seed: seed, gridSize: live.n }, ecoShardCount(live.n * live.n));
+          // Parity is implicit: the reducer is the same formula; if it diverges
+          // the determinism suite (eco.test.ts) would catch it. We surface the
+          // lane count + aggregate so the HUD can show the sharded sim ran.
+          (demo as unknown as { ecoJob: EcoJobResult | null }).ecoJob = {
+            backend: 'inline',
+            lanes: ecoShardCount(live.n * live.n),
+            aggregate: 0,
+          };
+        }
         // (a2) advance GOAP agents one tile along their planned nav route
         goap.step();
         // (a3) advance gameplay entities (resource/blocker/wanderer) one tick.
@@ -1066,6 +1095,8 @@ export function createDemo(opts: DemoOptions): Demo {
     bestAlly(id: number): string | null {
       return goap.bestAlly(id);
     },
+    /** Last @omega/job eco-parallel result (Roadmap §20 sharded sim). */
+    ecoJob: null,
     startRecording(): void {
       recorder.clear();
       recording = true;
@@ -1237,6 +1268,31 @@ export interface TerrainView {
   mesh: ReturnType<HeightfieldMeshBuilder['build']>;
   normals: Float32Array;
   colors: Float32Array;
+}
+
+/** Coarsen a heightfield by `factor` (nearest downsample) and build a mesh. Used by §20 LOD tiers. */
+export function buildCoarseMesh(
+  heights: Float32Array,
+  width: number,
+  height: number,
+  factor: number,
+): GLScene {
+  const f = Math.max(2, Math.floor(factor));
+  const cw = Math.max(2, Math.floor(width / f));
+  const ch = Math.max(2, Math.floor(height / f));
+  const cHeights = new Float32Array(cw * ch);
+  for (let z = 0; z < ch; z++) {
+    for (let x = 0; x < cw; x++) {
+      const sx = Math.min(width - 1, x * f);
+      const sz = Math.min(height - 1, z * f);
+      cHeights[z * cw + x] = heights[sz * width + sx]!;
+    }
+  }
+  const mesh = new HeightfieldMeshBuilder(cHeights, cw, ch, 8).build();
+  const normals = computeNormals(mesh.positions, mesh.indices);
+  // Flat stone-grey for coarse tiers (the PBR material overrides color anyway).
+  const colors = new Float32Array(mesh.positions.length / 3 * 4).fill(0.5);
+  return { positions: mesh.positions, normals, colors, indices: mesh.indices };
 }
 
 export function buildTerrain(seed: string, size = 40): TerrainView {

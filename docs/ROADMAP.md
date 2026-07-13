@@ -64,12 +64,12 @@ engineering increments.
   field: temp/humidity/precip/season), plate tectonics (derivation from terrain),
   fluvial erosion (river-coupled) — all deterministic (PR #45, PR #46).
 
-## 13. Simulation — [PARTIAL]
+## 13. Simulation — [DONE]
 - [DONE] fixed-timestep loop driving ECS systems; tick recording.
-- [ADDED][DONE] apps/web seed-able, deterministic gameplay scenario with entity types
-  (resource / dynamic blocker / wanderer), biome/terrain cost rules, emergent behaviour
-  (PR #38).
-- [NEXT] temperature/humidity/pressure fields, fire spread, ecosystems, economy, trade.
+- [ADDED][DONE] `@omega/sim-env` (temp/humidity/pressure fields), `@omega/sim-fire`
+  (deterministic cellular fire spread), `@omega/sim-eco` (per-cell ecosystem),
+  `@omega/sim-econ` (regional resource economy), `@omega/sim-trade`
+  (inter-region trade market) — all deterministic (PR #47, PR #52).
 
 ## 14. AI — [PARTIAL]
 - [ADDED][DONE] `@omega/ai-goap` — deterministic GOAP planner (WorldState/Action/Goal/Plan),

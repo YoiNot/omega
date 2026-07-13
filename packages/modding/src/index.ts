@@ -28,3 +28,10 @@ export {
   type ValidationError,
   type ValidationResult,
 } from './validate.js';
+export {
+  Marketplace,
+  loadLocalCatalog,
+  type ModCatalog,
+  type MarketplaceEntry,
+  type MarketplaceListing,
+} from './marketplace.js';

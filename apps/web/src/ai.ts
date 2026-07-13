@@ -121,7 +121,7 @@ export class AgentController {
   private readonly grid: Grid;
   private readonly resourceTile: Vec2;
   private readonly baseTile: Vec2;
-  private readonly planActions: Plan;
+  planActions: Plan;
   private path: Vec2[] = [];
   private pathIdx = 0;
 
@@ -159,6 +159,17 @@ export class AgentController {
       return this.resourceTile;
     }
     return this.baseTile; // goToBase / deliverResource
+  }
+
+  /**
+   * Replace the controller's plan and recompute its A* path from the agent's
+   * current tile. Used by the full AI stack to inject a personality/learning/
+   * goal-adjusted plan at runtime. Deterministic: same inputs ⇒ same plan/path.
+   */
+  setPlan(p: Plan, state: AgentComponent): void {
+    this.planActions = p;
+    this.pathIdx = 0;
+    this.retargetPath(state);
   }
 
   /** Recompute the A* path from the agent's tile to the current target tile. */
@@ -258,7 +269,7 @@ export function makeAgentComponent(tx: number, tz: number): AgentComponent {
 export class GoapSystem {
   private readonly world: World;
   private readonly grid: Grid;
-  private readonly controllers: AgentController[] = [];
+  private readonly controllersList: AgentController[] = [];
 
   constructor(world: World, grid: Grid) {
     this.world = world;
@@ -271,25 +282,45 @@ export class GoapSystem {
     const start = nearestFreeTile(this.grid, startTile.x, startTile.y) ?? startTile;
     const comp = makeAgentComponent(start.x, start.y);
     this.world.addComponent<AgentComponent>(AGENT_STORE, id, comp);
-    this.controllers.push(new AgentController(id, this.grid, comp, resource, base));
+    this.controllersList.push(new AgentController(id, this.grid, comp, resource, base));
     return id;
   }
 
   /** The chosen plan (action names) for agent `entity`, or `[]`. */
   planNames(entity: number): string[] {
-    const c = this.controllers.find((x) => x.entity === entity);
+    const c = this.controllersList.find((x) => x.entity === entity);
     return c ? c.actions.map((a) => a.name) : [];
   }
 
   /** Step every agent one fixed tick (deterministic, id-ascending order). */
   step(): void {
-    for (const controller of this.controllers) {
+    for (const controller of this.controllersList) {
       const comp = this.world.getComponent<AgentComponent>(AGENT_STORE, controller.entity);
       if (!comp) continue;
       controller.step(comp);
       // Component is mutated in place, but re-add to be explicit about the write.
       this.world.addComponent<AgentComponent>(AGENT_STORE, controller.entity, comp);
     }
+  }
+
+  /** The live agent controllers (read-only). Used by the AI stack extension. */
+  controllers(): readonly AgentController[] {
+    return this.controllersList;
+  }
+
+  /** The engine-core store name the agent component lives in. */
+  agentStore(): string {
+    return AGENT_STORE;
+  }
+
+  /** The underlying engine-core world (used by the AI stack extension). */
+  engineWorld(): World {
+    return this.world;
+  }
+
+  /** Ascending entity ids of all spawned agents. */
+  agentIds(): number[] {
+    return [...this.controllersList.map((c) => c.entity)].sort((a, b) => a - b);
   }
 
   /** Observable agent tile positions, ascending by entity id. */
@@ -304,7 +335,7 @@ export class GoapSystem {
 
   /** True once every agent has reached its goal. */
   allDone(): boolean {
-    for (const controller of this.controllers) {
+    for (const controller of this.controllersList) {
       const comp = this.world.getComponent<AgentComponent>(AGENT_STORE, controller.entity);
       if (comp && !controller.isDone(comp)) return false;
     }

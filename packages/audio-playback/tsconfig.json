@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "references": [
+    { "path": "../audio-spatial" },
+    { "path": "../engine-math" },
+    { "path": "../serialization" }
+  ],
+  "include": ["src/**/*.ts"]
+}

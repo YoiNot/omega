@@ -101,6 +101,9 @@
       "path": "./packages/render-pbr"
     },
     {
+      "path": "./packages/render-graph"
+    },
+    {
       "path": "./packages/render-ecs"
     },
     {

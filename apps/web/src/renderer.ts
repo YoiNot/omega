@@ -26,6 +26,7 @@
 
 import { GBufferPass, GTAO_FRAG, FULLSCREEN_VERT, bakeEnvMap } from '@omega/render';
 import type { GLScene as GBufferScene } from '@omega/render';
+import { RenderGraph, type FboSpec } from '@omega/render-graph';
 
 /** PBR surface material fed to the terrain shader (linear RGB, [0,1]). */
 export interface TerrainMaterial {
@@ -239,6 +240,11 @@ export class TerrainRenderer {
   private usePbr = false;
   /** Constructor scene (kept for the G-Buffer pass geometry). */
   private lodScene: GLScene | null = null;
+  /** Composable post-FX graph: G-Buffer -> GTAO -> PBR composite. */
+  private graph: RenderGraph | null = null;
+  /** Per-frame view + view-proj matrices (set in render(), read by run* passes). */
+  private viewProj: Float32Array = new Float32Array(16);
+  private view: Float32Array = new Float32Array(16);
 
   constructor(canvas: HTMLCanvasElement, scene: GLScene) {
     const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true });
@@ -356,6 +362,14 @@ export class TerrainRenderer {
       gl.enableVertexAttribArray(0);
       gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
       gl.bindVertexArray(null);
+      // Build the render graph once the G-Buffer + GTAO passes exist. The graph
+      // is the orchestrator; each pass's actual GL draw happens in `run*`
+      // (which read this.viewProj/this.view set per-frame in render()).
+      this.graph = new RenderGraph()
+        .add({ id: 'gbuffer', inputs: ['scene'], execute: () => this.runGbuffer() })
+        .add({ id: 'gtao', inputs: ['gbuffer'], execute: () => this.runGtao() })
+        .add({ id: 'pbr', inputs: ['gtao', 'scene'], execute: () => this.runPbr() })
+        .build();
     }
     // Procedural, seed-deterministic IBL env map (no HDRI asset, $0).
     const seed = Math.floor(sun.ambientTop[0] * 100 + sun.ambientBottom[0] * 7 + sun.intensity * 3);
@@ -405,59 +419,32 @@ export class TerrainRenderer {
   render(viewProj: Float32Array, view?: Float32Array): void {
     const gl = this.gl;
     const w = gl.canvas.width, h = gl.canvas.height;
+    this.viewProj = viewProj;
+    this.view = view ?? viewProj;
+
     gl.viewport(0, 0, w, h);
     gl.clearColor(0.04, 0.06, 0.1, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.DEPTH_TEST);
 
-    if (this.usePbr && this.pbrProgram && this.gbufferPass && this.aoProgram && this.aoVao && this.aoTex) {
-      const model = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
-      // --- Pass 1: G-Buffer (depth + view-space normal) into FBO ---
-      this.gbufferPass.render(viewProj, model);
-      const gb = this.gbufferPass.targets;
-
-      // --- Pass 2: GTAO -> AO texture (reads G-Buffer normal/depth) ---
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this.aoFbo);
-      gl.viewport(0, 0, w, h);
-      gl.clearColor(1, 1, 1, 1);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      gl.disable(gl.DEPTH_TEST);
-      gl.useProgram(this.aoProgram);
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, gb.normalTex);
-      gl.uniform1i(gl.getUniformLocation(this.aoProgram, 'uNormal'), 0);
-      gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, gb.depthTex);
-      gl.uniform1i(gl.getUniformLocation(this.aoProgram, 'uDepth'), 1);
-      gl.uniform2f(gl.getUniformLocation(this.aoProgram, 'uResolution'), w, h);
-      gl.uniform1f(gl.getUniformLocation(this.aoProgram, 'uRadius'), 0.5);
-      gl.uniform1f(gl.getUniformLocation(this.aoProgram, 'uFalloff'), 0.2);
-      gl.uniform1i(gl.getUniformLocation(this.aoProgram, 'uSamples'), 8);
-      gl.uniform1i(gl.getUniformLocation(this.aoProgram, 'uSlices'), 16);
-      gl.bindVertexArray(this.aoVao);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-      gl.bindVertexArray(null);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.enable(gl.DEPTH_TEST);
-
-      // --- Pass 3: PBR composite (terrain) with AO * IBL ---
-      gl.viewport(0, 0, w, h);
-      gl.clearColor(0.04, 0.06, 0.1, 1);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-      gl.enable(gl.DEPTH_TEST);
-      gl.useProgram(this.pbrProgram);
-      const loc = this.pbrLoc!;
-      if (loc.viewProj) gl.uniformMatrix4fv(loc.viewProj, false, viewProj);
-      if (loc.view) gl.uniformMatrix4fv(loc.view, false, view ?? viewProj);
-      // Bind GTAO result to uAO (texture unit 0).
-      if (loc.ao) {
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, this.aoTex);
-        gl.uniform1i(loc.ao, 0);
-      }
-      gl.bindVertexArray(this.lodVaos[this.lodLevel]!);
-      gl.drawElements(gl.TRIANGLES, this.lodIndexCounts[this.lodLevel] ?? 0, gl.UNSIGNED_INT, 0);
-      gl.bindVertexArray(null);
+    if (this.usePbr && this.pbrProgram && this.graph) {
+      // Drive the composable graph: G-Buffer -> GTAO -> PBR composite.
+      // The graph owns order + FBO pooling; run* do the actual GL draws.
+      this.graph.execute({
+        seed: 1, // deterministic frame seed (no clock)
+        width: w,
+        height: h,
+        feeds: new Map([['scene', {}]]),
+        alloc: (spec: FboSpec) => {
+          // Pooled FBO allocator (deterministic by spec).
+          const tex = gl.createTexture()!;
+          gl.bindTexture(gl.TEXTURE_2D, tex);
+          const fmt = spec.format === 'r8' ? gl.R8 : gl.RGBA8;
+          gl.texImage2D(gl.TEXTURE_2D, 0, fmt, spec.width, spec.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+          return tex;
+        },
+        run: (pass: { id: string }) => this.runPass(pass.id),
+      });
     } else {
       gl.useProgram(this.legacyProgram);
       if (this.viewProjLoc) gl.uniformMatrix4fv(this.viewProjLoc, false, viewProj);
@@ -465,6 +452,73 @@ export class TerrainRenderer {
       gl.drawElements(gl.TRIANGLES, this.lodIndexCounts[this.lodLevel] ?? 0, gl.UNSIGNED_INT, 0);
       gl.bindVertexArray(null);
     }
+  }
+
+  /** Dispatch a graph pass id to its GL draw routine. */
+  private runPass(id: string): void {
+    if (id === 'gbuffer') this.runGbuffer();
+    else if (id === 'gtao') this.runGtao();
+    else if (id === 'pbr') this.runPbr();
+  }
+
+  /** Pass 1: G-Buffer (depth + view-space normal) into FBO. */
+  private runGbuffer(): void {
+    const model = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+    this.gbufferPass!.render(this.viewProj, model);
+  }
+
+  /** Pass 2: GTAO -> AO texture (reads G-Buffer normal/depth). */
+  private runGtao(): void {
+    const gl = this.gl;
+    const prog = this.aoProgram;
+    if (!prog) return;
+    const w = gl.canvas.width, h = gl.canvas.height;
+    const gb = this.gbufferPass!.targets;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.aoFbo);
+    gl.viewport(0, 0, w, h);
+    gl.clearColor(1, 1, 1, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.disable(gl.DEPTH_TEST);
+    gl.useProgram(prog);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, gb.normalTex);
+    gl.uniform1i(gl.getUniformLocation(prog, 'uNormal'), 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, gb.depthTex);
+    gl.uniform1i(gl.getUniformLocation(prog, 'uDepth'), 1);
+    gl.uniform2f(gl.getUniformLocation(prog, 'uResolution'), w, h);
+    gl.uniform1f(gl.getUniformLocation(prog, 'uRadius'), 0.5);
+    gl.uniform1f(gl.getUniformLocation(prog, 'uFalloff'), 0.2);
+    gl.uniform1i(gl.getUniformLocation(prog, 'uSamples'), 8);
+    gl.uniform1i(gl.getUniformLocation(prog, 'uSlices'), 16);
+    gl.bindVertexArray(this.aoVao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindVertexArray(null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.enable(gl.DEPTH_TEST);
+  }
+
+  /** Pass 3: PBR composite (terrain) with AO * IBL. */
+  private runPbr(): void {
+    const gl = this.gl;
+    const prog = this.pbrProgram;
+    if (!prog) return;
+    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+    gl.clearColor(0.04, 0.06, 0.1, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.useProgram(prog);
+    const loc = this.pbrLoc!;
+    if (loc.viewProj) gl.uniformMatrix4fv(loc.viewProj, false, this.viewProj);
+    if (loc.view) gl.uniformMatrix4fv(loc.view, false, this.view);
+    if (loc.ao) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.aoTex);
+      gl.uniform1i(loc.ao, 0);
+    }
+    gl.bindVertexArray(this.lodVaos[this.lodLevel]!);
+    gl.drawElements(gl.TRIANGLES, this.lodIndexCounts[this.lodLevel] ?? 0, gl.UNSIGNED_INT, 0);
+    gl.bindVertexArray(null);
   }
 }
 

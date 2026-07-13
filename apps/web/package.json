@@ -28,6 +28,7 @@
     "@omega/nav-core": "*",
     "@omega/world-gen": "*",
     "@omega/render": "*",
+    "@omega/render-graph": "*",
     "@omega/physics": "*",
     "@omega/physics-integration": "*",
     "@omega/render-ecs": "*",

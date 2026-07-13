@@ -11,6 +11,21 @@
       "path": "./packages/ai-goap"
     },
     {
+      "path": "./packages/ai-learning"
+    },
+    {
+      "path": "./packages/ai-memory"
+    },
+    {
+      "path": "./packages/ai-personality"
+    },
+    {
+      "path": "./packages/ai-relationships"
+    },
+    {
+      "path": "./packages/ai-goals"
+    },
+    {
       "path": "./packages/audio"
     },
     {

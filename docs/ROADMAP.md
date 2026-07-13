@@ -81,10 +81,11 @@ engineering increments.
   wired into a playable, deterministic demo; gameplay content (PR #38).
 - [NEXT] player controller, interaction, crafting, construction.
 
-## 16. Multimedia — [ADDED][PARTIAL]
+## 16. Multimedia — [ADDED][DONE]
 - [ADDED][DONE] `@omega/audio-spatial` — deterministic 3D audio params (gain/pan/distance),
   decoupled from WebAudio playback (PR #31).
-- [NEXT] WebAudio playback layer, spatial mixdown, audio assets.
+- [ADDED][DONE] `@omega/audio-playback` — WebAudio graph adapter, spatial mixdown matrix,
+  deterministic buffer-based asset loader (PR #50).
 
 ## 17. Modding — [ADDED][PARTIAL]
 - [ADDED][DONE] `@omega/modding` — deterministic rule/content patches (ModManifest, applyMod,

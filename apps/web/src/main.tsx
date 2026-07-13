@@ -4,7 +4,7 @@ import { Vec3 } from '@omega/engine-math';
 import { raymarchClouds } from '@omega/render-pbr';
 import { Camera, defaultPbrMaterial, defaultSun, defaultEnvironment, selectLodLevel, defaultThresholds } from '@omega/render';
 import { TerrainMaterial, TerrainSun } from './renderer';
-import { createDemo, buildTerrain, buildPbrTerrain, type Demo } from './engine';
+import { createDemo, buildTerrain, buildCoarseMesh, buildPbrTerrain, type Demo } from './engine';
 import { TerrainRenderer } from './renderer';
 import { ModdingPanel } from './modding-panel';
 import { ReplayPanel } from './replay-panel';
@@ -113,6 +113,17 @@ function App() {
         ambientIntensity: env.ambientIntensity,
       };
       terrainRef.current.enablePbr(mat, sun);
+      // Roadmap §20: 3-level LOD chain (fine/coarse/coarsest) for weak HW — the
+      // orbit camera drops to fewer vertices at distance. Deterministic (pure
+      // function of seed + size).
+      const base = terrain.mesh;
+      const coarse = buildCoarseMesh(terrain.terrain.heights, terrain.terrain.width, terrain.terrain.height, 2);
+      const coarsest = buildCoarseMesh(terrain.terrain.heights, terrain.terrain.width, terrain.terrain.height, 4);
+      terrainRef.current.setLodMeshes([
+        { positions: base.positions, normals: terrain.normals, colors: terrain.colors, indices: base.indices },
+        coarse,
+        coarsest,
+      ]);
       const demo = createDemo({ seed: newSeed, terrainSize: TERRAIN_SIZE });
       demoRef.current = demo;
       // Build the PBR terrain view (material + LOD chain + shadow cascades)
@@ -173,6 +184,9 @@ function App() {
           cloudMean = cloud.meanDensity;
         }
         void defaultPbrMaterial; void defaultSun; void defaultEnvironment;
+
+        // Drive the LOD chain (§20) from the camera distance before drawing.
+        terrainRef.current?.setLodLevel(lodLevel);
 
         // Draw terrain through the real WebGL2 renderer.
         const vp = cam.getViewProjection().m;
@@ -329,6 +343,7 @@ function App() {
           <Metric label="Carnivores (mean)" value={metrics.carnivores.toFixed(3)} />
           <Metric label="Burning cells" value={String(metrics.burning)} />
           <Metric label="Trade flows" value={String(metrics.tradeFlows)} />
+          <Metric label="Eco LOD lanes (§20 job)" value={String(demoRef.current?.ecoJob?.lanes ?? 0)} />
           <ColonyAgentPanel demoRef={demoRef} />
           <h3 style={{ marginTop: 24 }}>What this proves</h3>
           <ul style={{ color: '#8fa3b8', paddingLeft: 16, lineHeight: 1.5 }}>

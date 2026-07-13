@@ -169,8 +169,10 @@ export class TerrainRenderer {
   private legacyProgram: WebGLProgram;
   /** PBR (Cook-Torrance GGX) program — built when a material is supplied. */
   private pbrProgram: WebGLProgram | null = null;
-  private vao: WebGLVertexArrayObject;
-  private indexCount = 0;
+  /** One VAO per LOD level (fine → coarse → coarsest). Index 0 is active by default. */
+  private lodVaos: WebGLVertexArrayObject[] = [];
+  private lodIndexCounts: number[] = [];
+  private lodLevel = 0;
   private viewProjLoc: WebGLUniformLocation | null;
   private pbrLoc: {
     viewProj: WebGLUniformLocation | null;
@@ -195,20 +197,51 @@ export class TerrainRenderer {
     const fs = compile(gl, gl.FRAGMENT_SHADER, FRAG);
     this.legacyProgram = link(gl, vs, fs);
     this.viewProjLoc = gl.getUniformLocation(this.legacyProgram, 'uViewProj');
+    // Build the base (level 0) LOD mesh from the constructor scene.
+    this.lodVaos = [this.buildVao(scene)];
+    this.lodIndexCounts = [scene.indices.length];
+    this.lodLevel = 0;
+  }
 
-    this.vao = gl.createVertexArray()!;
-    gl.bindVertexArray(this.vao);
-
+  /** Build a VAO for one LOD level's geometry. */
+  private buildVao(scene: GLScene): WebGLVertexArrayObject {
+    const gl = this.gl;
+    const vao = gl.createVertexArray()!;
+    gl.bindVertexArray(vao);
     this.upload('aPos', scene.positions, 3);
     this.upload('aNormal', scene.normals, 3);
     this.upload('aColor', scene.colors, 4);
-
     const ibo = gl.createBuffer()!;
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, scene.indices, gl.STATIC_DRAW);
-    this.indexCount = scene.indices.length;
-
     gl.bindVertexArray(null);
+    return vao;
+  }
+
+  /**
+   * Replace the LOD chain with `levels` (ordered fine → coarse → coarsest).
+   * Each level is an independent GLScene; the renderer picks one per frame via
+   * {@link setLodLevel}. This is Roadmap §20 LOD tiering — distant views draw
+   * fewer vertices, the real weak-HW win for the colony sim.
+   */
+  setLodMeshes(levels: GLScene[]): void {
+    const gl = this.gl;
+    // Delete old VAOs to avoid GPU leaks.
+    for (const v of this.lodVaos) gl.deleteVertexArray(v);
+    this.lodVaos = levels.map((lv) => this.buildVao(lv));
+    this.lodIndexCounts = levels.map((lv) => lv.indices.length);
+    this.lodLevel = 0;
+  }
+
+  /** Select the active LOD level (clamped to the available chain). */
+  setLodLevel(level: number): void {
+    if (this.lodVaos.length === 0) return;
+    this.lodLevel = Math.max(0, Math.min(level, this.lodVaos.length - 1));
+  }
+
+  /** Current LOD level (for HUD / debug). */
+  get currentLodLevel(): number {
+    return this.lodLevel;
   }
 
   /**
@@ -291,8 +324,8 @@ export class TerrainRenderer {
       gl.useProgram(this.legacyProgram);
       if (this.viewProjLoc) gl.uniformMatrix4fv(this.viewProjLoc, false, viewProj);
     }
-    gl.bindVertexArray(this.vao);
-    gl.drawElements(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_INT, 0);
+    gl.bindVertexArray(this.lodVaos[this.lodLevel]!);
+    gl.drawElements(gl.TRIANGLES, this.lodIndexCounts[this.lodLevel] ?? 0, gl.UNSIGNED_INT, 0);
     gl.bindVertexArray(null);
   }
 }

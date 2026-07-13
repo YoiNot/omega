@@ -59,8 +59,8 @@ function serialStep(field: EcoField, dt: number, env: { temperature: Float32Arra
   field.tick++;
 }
 
-describe('Step 2 — @omega/job is order-independent (§20 determinism)', () => {
-  it('inline == worker byte-identical (race-free sharding)', async () => {
+describe('Step 2 — @omega/job sharding is order-independent (§20 determinism)', () => {
+  it('ascending vs reversed shard order yield byte-identical buffers', async () => {
     const ok = await jobSystemDeterministic();
     expect(ok).toBe(true);
   });

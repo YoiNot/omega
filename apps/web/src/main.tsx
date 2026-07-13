@@ -145,10 +145,16 @@ function App() {
   /** Step 3 (§18 $0): copy a world-only share link (just the seed) to the clipboard. */
   function shareWorldLink() {
     const link = shareLink(seed);
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      void navigator.clipboard.writeText(link);
+    // Clipboard can be denied (insecure context / no permission); fall back to
+    // showing the link in the status line so the button never hard-crashes.
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        void navigator.clipboard.writeText(link).catch(() => {});
+      }
+    } catch {
+      /* clipboard unavailable — link is still shown below */
     }
-    setShareMsg('World link copied — same seed ⇒ same world on any client ($0, no server).');
+    setShareMsg(`World link: ${link} — same seed ⇒ same world on any client ($0, no server).`);
   }
 
   /** Step 3 (§18 $0): export the current seed + recorded replay as a JSON file. */

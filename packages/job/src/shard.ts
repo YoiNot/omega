@@ -78,3 +78,13 @@ export function mergeResult(buffer: ArrayBufferLike, count: number, blockSize: n
   }
   return acc;
 }
+
+/** Byte-exact comparison of two result buffers (worker-free helper). */
+export function buffersEqual(a: ArrayBufferLike, b: ArrayBufferLike): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  if (a.byteLength === 0) return true;
+  const fa = new Float64Array(a as ArrayBuffer);
+  const fb = new Float64Array(b as ArrayBuffer);
+  for (let i = 0; i < fa.length; i++) if (fa[i] !== fb[i]) return false;
+  return true;
+}

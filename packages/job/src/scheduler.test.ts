@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { JobScheduler, buffersEqual } from './scheduler.js';
+import { JobScheduler } from './scheduler.js';
+import { buffersEqual } from './shard.js';
 import type { JobSpec, JobReducer } from './types.js';
 import { defineType } from '@omega/reflect';
 

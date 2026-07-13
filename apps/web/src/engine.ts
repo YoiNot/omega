@@ -35,7 +35,7 @@
  * determinism + replay tests.
  */
 
-import { Vec3 } from '@omega/engine-math';
+import { Vec3, Vec2 } from '@omega/engine-math';
 import { World as CoreWorld, Rng, hashString64 } from '@omega/engine-core';
 import { World as EcsWorld, defineComponent } from '@omega/ecs';
 import {
@@ -82,8 +82,9 @@ import {
   type ParticleConfig,
   type CloudConfig,
 } from '@omega/render-pbr';
-import { TerrainGenerator, BIOME_COUNT } from '@omega/world-gen';
+import { TerrainGenerator, BIOME_COUNT, Biome } from '@omega/world-gen';
 import type { BooleanGrid } from './nav';
+import { nearestFreeTile } from './nav';
 import { GoapSystem, AGENT_STORE } from './ai';
 import {
   GameplaySystem,
@@ -91,6 +92,14 @@ import {
   BLOCKER_STORE,
   WANDERER_STORE,
 } from './entities';
+import {
+  PlayerSystem,
+  PLAYER_STORE,
+  frameToCommand,
+} from './player';
+import { InteractionSystem } from './interaction';
+import { CraftingSystem } from './crafting';
+import { ConstructionSystem, STRUCTURE_STORE } from './construction';
 import { buildScenario, applyScenario, type Scenario } from './scenario';
 import {
   Codec,
@@ -233,6 +242,11 @@ export class DemoInput {
     return this.buffer.toArray();
   }
 
+  /** Sample the host's next input frame for the given tick (replay-safe). */
+  sampleInput(frame: number): InputFrame {
+    return this.host.sample(frame);
+  }
+
   /** Advance one input tick and return the next command payload. */
   next(): Uint8Array {
     const frame = this.frame++;
@@ -312,6 +326,12 @@ export interface DemoOptions {
   wanderers?: number;
   /** When true, include the gameplay entity content (resource/blocker/wanderer + agents). Default true. */
   gameplay?: boolean;
+  /** When true, spawn the player controller + interaction/crafting/construction systems. Default true. */
+  player?: boolean;
+  /** Interaction radius (tiles, Chebyshev) for the player. Default 2. */
+  interactRadius?: number;
+  /** FOV half-angle (radians) for the player; 0 disables FOV. Default 0 (omnidirectional). */
+  interactFov?: number;
 }
 
 export interface ObservableBody {
@@ -359,6 +379,13 @@ export interface Demo {
   agentPlan(entity: number): string[];
   /** Deterministic gameplay system (resource/blocker/wanderer entities). */
   gameplay: GameplaySystem;
+  /** Deterministic player controller + interaction/crafting/construction systems (Roadmap §15). */
+  player: PlayerSystem;
+  interaction: InteractionSystem;
+  crafting: CraftingSystem;
+  construction: ConstructionSystem;
+  /** Map a tile to its biome id (for construction validation). */
+  biomeAt(tx: number, tz: number): number;
   /** The seed-built scenario (world + entity placement). */
   scenario: Scenario;
   /** PBR material used by the demo terrain (deterministic default). */
@@ -379,6 +406,12 @@ export interface Demo {
   blockerPositions(): { id: number; tx: number; tz: number }[];
   /** Observable wanderer positions + gathered total (ascending entity id). */
   wandererPositions(): { id: number; tx: number; tz: number; gathered: number }[];
+  /** Observable player position + state (ascending entity id). */
+  playerPositions(): { id: number; tx: number; tz: number; facing: string; hasResource: number; delivered: number }[];
+  /** Observable placed structures (ascending entity id). */
+  structures(): { id: number; tx: number; tz: number; kind: string }[];
+  /** Deterministically query what the player can interact with right now. */
+  interactables(): { id: number; tx: number; tz: number }[];
   startRecording(): void;
   /** Stop capturing world snapshots. */
   stopRecording(): void;
@@ -399,6 +432,9 @@ export function createDemo(opts: DemoOptions): Demo {
   const blockerCount = opts.blockers ?? 2;
   const wandererCount = opts.wanderers ?? 3;
   const withGameplay = opts.gameplay ?? true;
+  const withPlayer = opts.player ?? true;
+  const interactRadius = opts.interactRadius ?? 2;
+  const interactFov = opts.interactFov ?? 0;
 
   // --- 1. Local deterministic physics (engine-core World) -----------------
   const coreWorld = new CoreWorld();
@@ -582,6 +618,26 @@ export function createDemo(opts: DemoOptions): Demo {
     applyScenario(scenario, gameplay, (s, r, b) => goap.spawnAgent(s, r, b));
   }
 
+  // --- player + interaction/crafting/construction (Roadmap §15) --------------
+  // The player lives in the SAME engine-core world the recorder snapshots, so
+  // it is fully record/replay-deterministic. The structure store does NOT add a
+  // `PhysicsBody`, so the physics/fixed-tick trajectory stays byte-identical to
+  // the pre-§15 `runHeadless` oracle; placed structures instead block the LIVE
+  // nav grid (reused by agents + wanderers) — emergence, no separate world.
+  const scenarioBase = scenario.agentBaseTile;
+  const playerSys = new PlayerSystem(coreWorld, liveGrid, scenarioBase);
+  if (withPlayer) {
+    // Spawn the player on a free tile near the base (deterministic).
+    const pstart = nearestFreeTile(liveGrid, scenarioBase.x, scenarioBase.y) ?? scenarioBase;
+    playerSys.spawnPlayer(new Vec2(pstart.x, pstart.y));
+  }
+  const interactionSys = new InteractionSystem();
+  const craftingSys = new CraftingSystem();
+  const constructionSys = new ConstructionSystem(
+    coreWorld,
+    liveGrid,
+    (tx, tz) => scenario.biomeGrid.biomes[tz * scenario.size + tx] ?? Biome.Grassland,
+  );
   // --- view-world (ecs) render proxies for the gameplay entities -----------
   // Each resource/blocker/wanderer gets a deterministic renderable entity (a
   // coloured cube/sphere) so the demo visibly shows the new content. Positions
@@ -634,7 +690,7 @@ export function createDemo(opts: DemoOptions): Demo {
   // The gameplay stores (resource/blocker/wanderer) are recorded alongside the
   // physics bodies + GOAP agents so playback rebuilds the full observable world.
   const recorder = new Recorder(
-    [PhysicsBody.name, AGENT_STORE, RESOURCE_STORE, BLOCKER_STORE, WANDERER_STORE],
+    [PhysicsBody.name, AGENT_STORE, RESOURCE_STORE, BLOCKER_STORE, WANDERER_STORE, PLAYER_STORE, STRUCTURE_STORE],
     {
       seedLow: seedToU64Low(seed),
       seedHigh: seedToU64High(seed),
@@ -749,6 +805,13 @@ export function createDemo(opts: DemoOptions): Demo {
     fixedDt,
     terrainSeed: seed,
     gameplay,
+    player: playerSys,
+    interaction: interactionSys,
+    crafting: craftingSys,
+    construction: constructionSys,
+    biomeAt(tx: number, tz: number): number {
+      return scenario.biomeGrid.biomes[tz * scenario.size + tx] ?? Biome.Grassland;
+    },
     scenario,
     pbrMaterial,
     terrainLod,
@@ -776,6 +839,18 @@ export function createDemo(opts: DemoOptions): Demo {
         // They read the shared live nav grid (with the blockers) so everyone
         // re-routes around the roaming obstacles deterministically.
         gameplay.step(scheduler.frame);
+        // (a4) advance the player controller one tile from the current input
+        // frame. The command is a pure function of (input frame, player tile),
+        // so identical inputs ⇒ identical player trajectory. The player shares
+        // the live nav grid, so it cannot desync from the recorded world.
+        if (withPlayer) {
+          const pcomp = playerSys.players()[0];
+          const frame = input.sampleInput(scheduler.frame);
+          const cmd = pcomp
+            ? frameToCommand(frame, new Vec2(pcomp.tx, pcomp.tz))
+            : { frame: scheduler.frame, dx: 0, dz: 0, action: false };
+          playerSys.step(cmd);
+        }
         // (b) input -> client predicts, server simulates, snapshot reconciles
         const payload = input.next();
         const cmd = client.sendIntent(payload);
@@ -834,6 +909,22 @@ export function createDemo(opts: DemoOptions): Demo {
     wandererPositions() {
       return gameplay.wanderers();
     },
+    playerPositions() {
+      return playerSys.players();
+    },
+    structures() {
+      return constructionSys.structures();
+    },
+    interactables() {
+      const p = playerSys.players()[0];
+      if (!p) return [];
+      // Build the candidate target set from resources + structures + blockers.
+      const targets: { id: number; tx: number; tz: number }[] = [];
+      for (const r of gameplay.resources()) targets.push({ id: 100000 + r.id, tx: r.tx, tz: r.tz });
+      for (const s of constructionSys.structures()) targets.push({ id: 200000 + s.id, tx: s.tx, tz: s.tz });
+      for (const b of gameplay.blockers()) targets.push({ id: 300000 + b.id, tx: b.tx, tz: b.tz });
+      return interactionSys.query(p.tx, p.tz, p.facing, targets, interactRadius, interactFov);
+    },
     startRecording(): void {
       recorder.clear();
       recording = true;
@@ -862,6 +953,8 @@ export interface HeadlessResult {
   resources: number[][]; // [id, tx, tz, amount] per resource node
   blockers: number[][]; // [id, tx, tz] per roaming blocker
   wanderers: number[][]; // [id, tx, tz, gathered] per wandering scout
+  players: number[][]; // [id, tx, tz, hasResource, delivered] per player
+  structures: number[][]; // [id, tx, tz] per placed structure
 }
 
 export function runHeadless(
@@ -881,6 +974,8 @@ export function runHeadless(
     resources: demo.resourcePositions().map((r) => [r.id, r.tx, r.tz, r.amount]),
     blockers: demo.blockerPositions().map((b) => [b.id, b.tx, b.tz]),
     wanderers: demo.wandererPositions().map((w) => [w.id, w.tx, w.tz, w.gathered]),
+    players: demo.playerPositions().map((p) => [p.id, p.tx, p.tz, p.hasResource, p.delivered]),
+    structures: demo.structures().map((s) => [s.id, s.tx, s.tz]),
   };
 }
 
@@ -911,6 +1006,8 @@ export function recordHeadless(
       resources: demo.resourcePositions().map((r) => [r.id, r.tx, r.tz, r.amount]),
       blockers: demo.blockerPositions().map((b) => [b.id, b.tx, b.tz]),
       wanderers: demo.wandererPositions().map((w) => [w.id, w.tx, w.tz, w.gathered]),
+      players: demo.playerPositions().map((p) => [p.id, p.tx, p.tz, p.hasResource, p.delivered]),
+      structures: demo.structures().map((s) => [s.id, s.tx, s.tz]),
     },
   };
 }
@@ -935,6 +1032,8 @@ export function replayHeadless(
     RESOURCE_STORE,
     BLOCKER_STORE,
     WANDERER_STORE,
+    PLAYER_STORE,
+    STRUCTURE_STORE,
   ]);
   playback.playTo(ticks - 1);
   const round = (n: number) => Math.round(n * 1e6) / 1e6;
@@ -966,6 +1065,16 @@ export function replayHeadless(
     const w = world.getComponent<{ tx: number; tz: number; gathered: number }>(WANDERER_STORE, id);
     if (w) wanderers.push([id, w.tx, w.tz, w.gathered]);
   }
+  const players: number[][] = [];
+  for (const id of world.store(PLAYER_STORE).keys()) {
+    const p = world.getComponent<{ tx: number; tz: number; hasResource: number; delivered: number }>(PLAYER_STORE, id);
+    if (p) players.push([id, p.tx, p.tz, p.hasResource, p.delivered]);
+  }
+  const structures: number[][] = [];
+  for (const id of world.store(STRUCTURE_STORE).keys()) {
+    const s = world.getComponent<{ tx: number; tz: number }>(STRUCTURE_STORE, id);
+    if (s) structures.push([id, s.tx, s.tz]);
+  }
   return {
     physics: pack(out),
     netServer: [],
@@ -974,6 +1083,8 @@ export function replayHeadless(
     resources,
     blockers,
     wanderers,
+    players,
+    structures,
   };
 }
 

@@ -405,6 +405,8 @@ export interface Demo {
   aiStackViews(): ReturnType<AiStackSystem['stackViews']>;
   /** Serializable social network of the demo agents. */
   relationshipSnapshot(): ReturnType<AiStackSystem['relationshipSnapshot']>;
+  /** Best ally of an agent in the shared social network (or null). */
+  bestAlly(id: number): string | null;
   /** Gather the demo's emitters as audio sources (agents + player + net). */
   audioSources(): AudioSourceInput[];
   /** Deterministic, id-ordered draw list for the current view world. */
@@ -1059,6 +1061,10 @@ export function createDemo(opts: DemoOptions): Demo {
     /** Serializable social network of the demo agents. */
     relationshipSnapshot() {
       return goap.relationshipSnapshot();
+    },
+    /** Best ally of an agent in the shared social network (or null). */
+    bestAlly(id: number): string | null {
+      return goap.bestAlly(id);
     },
     startRecording(): void {
       recorder.clear();

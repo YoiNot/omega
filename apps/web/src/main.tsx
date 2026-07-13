@@ -353,44 +353,66 @@ function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      <header style={{ padding: '10px 16px', borderBottom: '1px solid #1b2735', display: 'flex', gap: 10, alignItems: 'center' }}>
-        <strong style={{ fontSize: 15 }}>PROJECT OMEGA</strong>
-        <span style={{ color: '#5b6b7d', fontSize: 12 }}>deterministic integration demo</span>
-        <div style={{ flex: 1 }} />
-        <input
-          value={seed}
-          onChange={(e) => setSeed(e.target.value)}
-          style={{ background: '#0d1620', color: '#d8e0ea', border: '1px solid #1b2735', padding: '4px 8px', borderRadius: 4 }}
-        />
-        <button onClick={() => regenerate(seed)} style={btn}>Generate</button>
-        <button onClick={() => setRunning((r) => !r)} style={btn}>{running ? '⏸ Pause' : '▶ Run'}</button>
-        <button onClick={() => regenerate(seed)} style={btn}>↺ Reset</button>
-        <button onClick={shareWorldLink} style={btn}>🔗 Share world</button>
-        <button onClick={exportReplay} style={btn}>⤓ Export replay</button>
-        <label style={{ ...btn, display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}>
-          ⤒ Load replay
-          <input
-            type="file"
-            accept="application/json"
-            style={{ display: 'none' }}
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) loadReplayFile(f); }}
-          />
-        </label>
-      </header>
-      {shareMsg ? (
-        <div style={{ padding: '6px 16px', background: '#0d1620', color: '#7fd6a0', fontSize: 12, borderBottom: '1px solid #1b2735' }}>
-          {shareMsg}
-        </div>
-      ) : null}
+      <style>{`
+            .omg-btn {
+              background: #13202e; color: #d8e0ea; border: 1px solid #25384c;
+              padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;
+              line-height: 1.2; transition: background 90ms ease, transform 60ms ease;
+              user-select: none; white-space: nowrap;
+            }
+            .omg-btn:hover { background: #1c2e40; border-color: #35516e; }
+            .omg-btn:active { background: #0d1620; transform: translateY(1px); }
+            .omg-metric-label { color: #93a6ba; }
+            .omg-panel { background: #0c1219; border-left: 1px solid #1b2735; }
+            .omg-status { word-break: break-word; overflow-wrap: anywhere; }
+            @media (max-width: 860px) {
+              .omg-panel { width: 260px !important; }
+              header { gap: 6px !important; }
+              .omg-seed-input { flex: 1 1 120px !important; max-width: 160px !important; }
+            }
+            @media (max-width: 620px) {
+              .omg-panel { display: none; }
+            }
+          `}</style>
+          <header style={{ padding: '10px 16px', borderBottom: '1px solid #1b2735', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+            <strong style={{ fontSize: 15 }}>PROJECT OMEGA</strong>
+            <span style={{ color: '#5b6b7d', fontSize: 12 }}>deterministic integration demo</span>
+            <div style={{ flex: 1, minWidth: 8 }} />
+            <input
+              className="omg-seed-input"
+              value={seed}
+              onChange={(e) => setSeed(e.target.value)}
+              style={{ background: '#0d1620', color: '#d8e0ea', border: '1px solid #1b2735', padding: '4px 8px', borderRadius: 4, maxWidth: 200 }}
+            />
+            <button onClick={() => regenerate(seed)} className="omg-btn">Generate</button>
+            <button onClick={() => setRunning((r) => !r)} className="omg-btn">{running ? '⏸ Pause' : '▶ Run'}</button>
+            <button onClick={() => regenerate(seed)} className="omg-btn">↺ Reset</button>
+            <button onClick={shareWorldLink} className="omg-btn">🔗 Share world</button>
+            <button onClick={exportReplay} className="omg-btn">⤓ Export replay</button>
+            <label className="omg-btn" style={{ display: 'inline-flex', alignItems: 'center' }}>
+              ⤒ Load replay
+              <input
+                type="file"
+                accept="application/json"
+                style={{ display: 'none' }}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) loadReplayFile(f); }}
+              />
+            </label>
+          </header>
+          {shareMsg ? (
+            <div className="omg-status" style={{ padding: '6px 16px', background: '#0d1620', color: '#7fd6a0', fontSize: 12, borderBottom: '1px solid #1b2735' }}>
+              {shareMsg}
+            </div>
+          ) : null}
 
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ position: 'relative', flex: 1, background: '#0a0e14' }}>
-          <canvas ref={terrainCanvasRef} width={960} height={720} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />
-          <canvas ref={overlayRef} width={960} height={720} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
-        </div>
-        <aside style={{ width: 300, borderLeft: '1px solid #1b2735', padding: 16, fontSize: 12, overflow: 'auto' }}>
-          <h3 style={{ marginTop: 0 }}>Status</h3>
-          <div style={{ color: '#8fa3b8' }}>{status}</div>
+          <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+            <div style={{ position: 'relative', flex: 1, background: '#0a0e14' }}>
+              <canvas ref={terrainCanvasRef} width={960} height={720} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />
+              <canvas ref={overlayRef} width={960} height={720} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
+            </div>
+            <aside className="omg-panel" style={{ width: 300, padding: 16, fontSize: 12, overflow: 'auto' }}>
+              <h3 style={{ marginTop: 0 }}>Status</h3>
+              <div className="omg-status" style={{ color: '#8fa3b8' }}>{status}</div>
           <h3 style={{ marginTop: 24 }}>Live metrics</h3>
           <Metric label="Physics tick" value={String(metrics.physTick)} />
           <Metric label="Net tick (server)" value={String(metrics.netTick)} />
@@ -417,12 +439,6 @@ function App() {
             <li><b>physics-integration</b>: deterministic fixed-step rigid bodies on a seeded World</li>
             <li><b>render-ecs</b>: id-ordered draw list (cyan/orange = physics, magenta/green = net)</li>
             <li><b>net-replication</b>: server-authoritative sim over a LoopbackTransport; client prediction + reconciliation converges to the server bit-for-bit</li>
-            <li>Headless determinism test: same seed → same end state</li>
-          </ul>
-          <ul style={{ color: '#8fa3b8', paddingLeft: 16, lineHeight: 1.5 }}>
-            <li><b>physics-integration</b>: deterministic fixed-step rigid bodies on a seeded World</li>
-            <li><b>render-ecs</b>: id-ordered draw list (cyan/orange = physics, magenta/green = net)</li>
-            <li><b>net-replication</b>: server-authoritative sim over a LoopbackTransport; client prediction + reconciliation converges to the server bit-for-bit</li>
             <li><b>input-core</b>: live DOM input source → deterministic InputFrame → command payload</li>
             <li><b>time-core</b>: fixed-timestep scheduler is the tick source (FPS-decoupled)</li>
             <li><b>replay</b>: optional Recorder snapshots each tick; Playback rebuilds the world deterministically</li>
@@ -441,7 +457,7 @@ function App() {
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid #131c27' }}>
-      <span style={{ color: '#5b6b7d' }}>{label}</span>
+      <span className="omg-metric-label">{label}</span>
       <span>{value}</span>
     </div>
   );
@@ -484,10 +500,7 @@ function ColonyAgentPanel({ demoRef }: { demoRef: React.MutableRefObject<Demo | 
   );
 }
 
-const btn: React.CSSProperties = {
-  background: '#13202e', color: '#d8e0ea', border: '1px solid #25384c',
-  padding: '5px 10px', borderRadius: 4, cursor: 'pointer', fontSize: 12,
-};
+
 
 const root = createRoot(document.getElementById('root')!);
 root.render(

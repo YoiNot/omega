@@ -8,6 +8,7 @@ import { createDemo, buildTerrain, buildCoarseMesh, buildPbrTerrain, type Demo }
 import { TerrainRenderer } from './renderer';
 import { ModdingPanel } from './modding-panel';
 import { ReplayPanel } from './replay-panel';
+import { buildSharePayload, payloadToJson, shareLink, seedFromUrl, jsonToPayload, recordingFromPayload } from './share';
 
 const TERRAIN_SIZE = 40;
 
@@ -33,9 +34,10 @@ function projectToScreen(
 }
 
 function App() {
-  const [seed, setSeed] = useState('omega-demo');
+  const [seed, setSeed] = useState(seedFromUrl() ?? 'omega-demo');
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState('idle');
+  const [shareMsg, setShareMsg] = useState('');
   const [metrics, setMetrics] = useState({
     physTick: 0,
     netTick: 0,
@@ -138,6 +140,49 @@ function App() {
           `${demo.netPositionsServer().length} net entities, deterministic fixed-step`,
       );
     });
+  }
+
+  /** Step 3 (§18 $0): copy a world-only share link (just the seed) to the clipboard. */
+  function shareWorldLink() {
+    const link = shareLink(seed);
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      void navigator.clipboard.writeText(link);
+    }
+    setShareMsg('World link copied — same seed ⇒ same world on any client ($0, no server).');
+  }
+
+  /** Step 3 (§18 $0): export the current seed + recorded replay as a JSON file. */
+  function exportReplay() {
+    const demo = demoRef.current;
+    if (!demo) return;
+    const payload = buildSharePayload(demo, seed);
+    const json = payloadToJson(payload);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `omega-${seed}.replay.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setShareMsg('Replay exported — load it on another client to reproduce the exact run.');
+  }
+
+  /** Step 3 (§18 $0): load a shared replay JSON and rebuild the same world. */
+  function loadReplayFile(file: File) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const payload = jsonToPayload(String(reader.result));
+        // (a) world: same seed ⇒ same procgen + sim on any client.
+        regenerate(payload.seed);
+        // (b) replay bytes are reconstructable for parity/inspection (see opt/replay tests).
+        void recordingFromPayload(payload);
+        setShareMsg(`Loaded seed "${payload.seed}" — world reproduced deterministically.`);
+      } catch {
+        setShareMsg('Invalid replay file.');
+      }
+    };
+    reader.readAsText(file);
   }
 
   // Render + fixed-timestep loop driving the demo (scheduler is the tick source).
@@ -314,7 +359,23 @@ function App() {
         <button onClick={() => regenerate(seed)} style={btn}>Generate</button>
         <button onClick={() => setRunning((r) => !r)} style={btn}>{running ? '⏸ Pause' : '▶ Run'}</button>
         <button onClick={() => regenerate(seed)} style={btn}>↺ Reset</button>
+        <button onClick={shareWorldLink} style={btn}>🔗 Share world</button>
+        <button onClick={exportReplay} style={btn}>⤓ Export replay</button>
+        <label style={{ ...btn, display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}>
+          ⤒ Load replay
+          <input
+            type="file"
+            accept="application/json"
+            style={{ display: 'none' }}
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) loadReplayFile(f); }}
+          />
+        </label>
       </header>
+      {shareMsg ? (
+        <div style={{ padding: '6px 16px', background: '#0d1620', color: '#7fd6a0', fontSize: 12, borderBottom: '1px solid #1b2735' }}>
+          {shareMsg}
+        </div>
+      ) : null}
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div style={{ position: 'relative', flex: 1, background: '#0a0e14' }}>

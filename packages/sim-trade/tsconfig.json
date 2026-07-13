@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "outDir": "./dist", "rootDir": "./src" },
+  "references": [
+    { "path": "../engine-core" },
+    { "path": "../engine-math" },
+    { "path": "../sim-econ" },
+    { "path": "../nav-core" }
+  ],
+  "include": ["src/**/*.ts"]
+}

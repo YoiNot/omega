@@ -28,6 +28,7 @@
 
 import { Worker } from 'worker_threads';
 import type { JobSpec, JobResult, JobDescriptor, RunOptions } from './types.js';
+import { buffersEqual } from './shard.js';
 import { partition, mergeResult } from './shard.js';
 import { runInline } from './inline.js';
 
@@ -154,17 +155,4 @@ export class JobScheduler {
     const parallel = await this.run(spec, { backend: 'worker', lanes });
     return buffersEqual(serial.buffer, parallel.buffer);
   }
-}
-
-/** Byte-exact comparison of two result buffers. */
-export function buffersEqual(a: ArrayBufferLike, b: ArrayBufferLike): boolean {
-  if (a.byteLength !== b.byteLength) return false;
-  if (a.byteLength === 0) return true;
-  const fa = new Float64Array(a as ArrayBuffer);
-  const fb = new Float64Array(b as ArrayBuffer);
-  if (fa.length !== fb.length) return false;
-  for (let i = 0; i < fa.length; i++) {
-    if (fa[i] !== fb[i]) return false;
-  }
-  return true;
 }

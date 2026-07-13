@@ -71,8 +71,9 @@ export function buildScenario(
   seed: string,
   size = 40,
   counts: ScenarioCounts = DEFAULT_COUNTS,
+  terrainOverride?: Terrain,
 ): Scenario {
-  const terrain = new TerrainGenerator(seed, { size }).generate();
+  const terrain = terrainOverride ?? new TerrainGenerator(seed, { size }).generate();
   const navGrid = buildNavGrid(terrain);
   const biomeGrid = buildBiomeNavGrid(terrain);
   const liveGrid = new LiveGrid(navGrid);

@@ -8,50 +8,19 @@
  * makes it perfectly data-parallel.
  *
  * We own the result buffer (packed with v/h/c/temp/hum/dt so the reducer is
- * self-contained + transport-safe) and shard it with the SAME `partition`
- * algorithm @omega/job uses. We deliberately re-implement the three small
- * shard helpers LOCALLY instead of importing `@omega/job`: that package's
- * index statically binds its Node `worker_threads` backend, which Vite
- * externalizes and which would crash the browser bundle on load. Keeping the
- * partition math identical preserves the determinism contract (shard
- * boundaries + per-item RNG match the package's executors); the actual
- * worker_threads gate is covered in opt.test.ts under Node, where it is safe.
+ * self-contained + transport-safe) and shard it with `@omega/job`'s `partition`
+ * (identical shard boundaries to the package's executors). Per PR #58 the
+ * default `@omega/job` export is browser-safe (no `worker_threads`), so we can
+ * import `partition` / `mergeResult` directly instead of mirroring them.
+ * This preserves the determinism contract (shard boundaries + per-item RNG
+ * match the package's executors); the inline==worker gate is covered in
+ * opt.test.ts under Node, where it is safe.
  */
 
 import { Rng } from '@omega/engine-core';
+import { partition, mergeResult } from '@omega/job';
 import type { EcoField, EcoFieldOptions } from '@omega/sim-eco';
 import type { EnvField } from '@omega/sim-env';
-
-/** Local mirror of @omega/job's `partition` — identical shard boundaries. */
-function partition(count: number, lanes: number): Array<[number, number]> {
-  const n = Math.max(1, Math.min(lanes, count));
-  const base = Math.floor(count / n);
-  const rem = count % n;
-  const out: Array<[number, number]> = [];
-  let cursor = 0;
-  for (let i = 0; i < n; i++) {
-    const len = base + (i < rem ? 1 : 0);
-    out.push([cursor, cursor + len]);
-    cursor += len;
-  }
-  return out;
-}
-
-/** Local mirror of @omega/job's `mergeResult` — deterministic aggregate. */
-function mergeResult(buffer: ArrayBufferLike, count: number, blockSize: number): number {
-  const f64 = new Float64Array(buffer as ArrayBuffer);
-  const floatsPerItem = Math.floor(blockSize / 8);
-  let acc = 0;
-  for (let i = 0; i < count; i++) {
-    const base = i * floatsPerItem;
-    for (let k = 0; k < floatsPerItem; k++) {
-      const v = f64[base + k];
-      const bits = Number.isNaN(v) ? 0 : Math.trunc(v * 1e6);
-      acc = (acc + bits * (i + k + 1)) | 0;
-    }
-  }
-  return acc;
-}
 
 /** Per-item reducer context (duck-typed to @omega/job's JobContext). */
 interface EcoJobContext {
@@ -120,9 +89,9 @@ export interface EcoJobResult {
 /**
  * Advance the eco field one tick via @omega/job sharding. We own the result
  * buffer (packed with v/h/c/temp/hum/dt) and drive it with @omega/job's
- * `partition` + `makeContext` so the shard boundaries + ctx match the package's
- * executors. The reducer is self-contained (reads only its own buffer slot), so
- * it is order-independent and deterministic — the core §20 guarantee.
+ * `partition` so the shard boundaries match the package's executors. The
+ * reducer is self-contained (reads only its own buffer slot), so it is
+ * order-independent and deterministic — the core §20 guarantee.
  *
  * Note: the package's `worker` backend builds its OWN buffer (it has no hook to
  * inject external state like dt/env), so the eco step runs on the inline
@@ -196,5 +165,3 @@ export async function jobSystemDeterministic(): Promise<boolean> {
 export function ecoShardCount(count: number, lanes = 4): number {
   return partition(count, lanes).length;
 }
-
-void mergeResult;

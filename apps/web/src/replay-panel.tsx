@@ -25,8 +25,10 @@ import {
   recordingFromBytes,
   playRecordingTo,
   recordingTicks,
+  seekTo,
   type Recording,
 } from './replay';
+import { TimelineViewer } from './timeline-viewer';
 
 const panelBtn: React.CSSProperties = {
   background: '#13202e', color: '#d8e0ea', border: '1px solid #25384c',
@@ -51,6 +53,8 @@ export interface ReplayPanelProps {
 export function ReplayPanel({ demoRef }: ReplayPanelProps) {
   const [recording, setRecording] = useState(false);
   const [frameCount, setFrameCount] = useState(0);
+  const [currentTick, setCurrentTick] = useState(0);
+  const [seekState, setSeekState] = useState<{ bodies: number; agents: number } | null>(null);
   const [status, setStatus] = useState<{ kind: 'ok' | 'err' | 'idle'; msg: string }>({
     kind: 'idle',
     msg: 'Record the running world, then Save / Load / Play the deterministic capture',
@@ -83,7 +87,17 @@ export function ReplayPanel({ demoRef }: ReplayPanelProps) {
     heldRec.current = rec;
     const n = rec?.frames.length ?? 0;
     setFrameCount(n);
+    setCurrentTick(rec ? recordingTicks(rec)[0] ?? 0 : 0);
+    setSeekState(null);
     setStatus({ kind: 'ok', msg: `stopped — captured ${n} tick(s)` });
+  }
+
+  function onSeek(tick: number) {
+    const rec = heldRec.current;
+    if (!rec || rec.frames.length === 0) return;
+    setCurrentTick(tick);
+    const state = seekTo(rec, tick);
+    setSeekState({ bodies: state.physics.length, agents: state.agents.length });
   }
 
   function onSave() {
@@ -167,6 +181,14 @@ export function ReplayPanel({ demoRef }: ReplayPanelProps) {
           style={{ display: 'none' }}
         />
         <button onClick={refreshCount} style={panelBtn}>↻ Frames</button>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <TimelineViewer recording={heldRec.current} currentTick={currentTick} onSeek={onSeek} />
+        {seekState && (
+          <div style={{ marginTop: 4, color: '#67c8ff', fontSize: 11 }}>
+            frame @ tick {currentTick}: {seekState.bodies} bodies + {seekState.agents} agents (deterministic)
+          </div>
+        )}
       </div>
       <div style={{ marginTop: 8, color: '#5b6b7d', fontSize: 11 }}>
         captured frames: <b style={{ color: '#d8e0ea' }}>{frameCount}</b>

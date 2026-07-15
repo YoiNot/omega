@@ -23,10 +23,21 @@ import {
 import type { RigidBody } from '@omega/physics';
 import { PhysicsBody } from '@omega/physics-integration';
 import { AGENT_STORE, type AgentComponent } from './ai';
+import { RESOURCE_STORE, BLOCKER_STORE, WANDERER_STORE } from './entities';
+import { PLAYER_STORE } from './player';
+import { STRUCTURE_STORE } from './construction';
 import type { Demo } from './engine';
 
-/** Component stores captured by the demo recorder (physics bodies + GOAP agents). */
-export const REPLAY_STORES = [PhysicsBody.name, AGENT_STORE] as const;
+/** Component stores captured by the demo recorder (full observable world). */
+export const REPLAY_STORES = [
+  PhysicsBody.name,
+  AGENT_STORE,
+  RESOURCE_STORE,
+  BLOCKER_STORE,
+  WANDERER_STORE,
+  PLAYER_STORE,
+  STRUCTURE_STORE,
+] as const;
 
 /** Fixed `createdAt` so serialized replay bytes are byte-stable/reproducible. */
 const FIXED_CREATED_AT = 0;
@@ -76,18 +87,38 @@ export function recordingTicks(rec: Recording): number[] {
   return rec.frames.map((f) => f.tick);
 }
 
+/**
+ * Seek the replay to an arbitrary tick and return the observable world state
+ * there. Behaves like {@link playRecordingTo} but accepts ANY tick (clamped to
+ * the recorded range), enabling a scrubable timeline UI. Deterministic: the
+ * same (rec, tick) always yields identical state (frames are full snapshots
+ * applied from frame 0).
+ */
+export function seekTo(rec: Recording, tick: number): ReplayFrameState {
+  const ticks = recordingTicks(rec);
+  if (ticks.length === 0) return { tick: 0, physics: [], agents: [] };
+  const last = ticks[ticks.length - 1]!;
+  const target = Math.max(ticks[0]!, Math.min(tick, last));
+  return playRecordingTo(rec, target);
+}
+
 /** Read observable physics + agent state out of a reconstructed world. */
 function readWorldState(world: CoreWorld, tick: number): ReplayFrameState {
+  const round = (n: number) => Math.round(n * 1e6) / 1e6;
   const physics: ReplayFrameState['physics'] = [];
   for (const id of world.store(PhysicsBody.name).keys()) {
     const b = world.getComponent<RigidBody>(PhysicsBody.name, id);
-    if (b) physics.push({ id, x: b.position.x, y: b.position.y, z: b.position.z });
+    if (b) physics.push({ id, x: round(b.position.x), y: round(b.position.y), z: round(b.position.z) });
   }
   const agents: ReplayFrameState['agents'] = [];
   for (const id of world.store<AgentComponent>(AGENT_STORE).keys()) {
     const a = world.getComponent<AgentComponent>(AGENT_STORE, id);
     if (a) agents.push({ id, tx: a.tx, tz: a.tz, delivered: a.delivered });
   }
+  // Sort by id so the observable state is order-deterministic (the store's key
+  // iteration order is not guaranteed stable across reconstructions).
+  physics.sort((p, q) => p.id - q.id);
+  agents.sort((p, q) => p.id - q.id);
   return { tick, physics, agents };
 }
 

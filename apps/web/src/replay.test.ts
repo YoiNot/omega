@@ -15,6 +15,7 @@ import {
   replayHeadless,
 } from './engine';
 import { serializeRecording, loadRecording } from '@omega/replay';
+import { seekTo, recordingTicks } from './replay';
 
 describe('apps/web vertical-slice replay determinism', () => {
   const SEED = 'omega-demo';
@@ -67,5 +68,37 @@ describe('apps/web vertical-slice replay determinism', () => {
     const replayed = replayHeadless(loaded, HALF);
     expect(replayed.agents).toEqual(result.agents);
     expect(replayed.physics).toEqual(result.physics);
+  });
+
+  describe('timeline viewer seek (D)', () => {
+    const { recording } = recordHeadless(SEED, TICKS);
+    const ticks = recordingTicks(recording);
+    const last = ticks[ticks.length - 1]!;
+
+    it('seekTo is deterministic: same tick => identical world state', () => {
+      const a = seekTo(recording, last);
+      const b = seekTo(recording, last);
+      expect(a.physics).toEqual(b.physics);
+      expect(a.agents).toEqual(b.agents);
+    });
+
+    it('seekTo clamps out-of-range ticks to [first, last]', () => {
+      const under = seekTo(recording, -999);
+      const over = seekTo(recording, 1e9);
+      const firstState = seekTo(recording, ticks[0]!);
+      const lastState = seekTo(recording, last);
+      expect(under.physics).toEqual(firstState.physics);
+      expect(over.physics).toEqual(lastState.physics);
+    });
+
+    it('seekTo reconstructs distinct, deterministic states per tick', () => {
+      // Each tick yields its own deterministic world state; seeking the same
+      // tick twice is identical, and two different ticks differ (the sim moved).
+      const early = seekTo(recording, ticks[0]!);
+      const late = seekTo(recording, last);
+      expect(early.physics).not.toEqual(late.physics); // sim advanced
+      const lateAgain = seekTo(recording, last);
+      expect(lateAgain.physics).toEqual(late.physics); // deterministic
+    });
   });
 });

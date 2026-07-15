@@ -45,6 +45,10 @@ float det_sqrt(float x) {
 float det_div(float a, float b) {
   return a * det_inverseSqrt(b) * det_inverseSqrt(b); // a/b = a * (1/b)^2
 }
+vec3 det_normalize3(vec3 v) {
+  float len = det_sqrt(dot(v, v));
+  return len > 1e-8 ? v / len : vec3(0.0);
+}
 `;
 
 /**

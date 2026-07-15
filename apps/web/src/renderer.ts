@@ -24,7 +24,7 @@
  *   the "early-2000s OpenGL" look of flat lambert.
  */
 
-import { GBufferPass, GTAO_FRAG, FULLSCREEN_VERT, bakeEnvMap } from '@omega/render';
+import { GBufferPass, GTAO_FRAG, FULLSCREEN_VERT, bakeEnvMap, GLSL_DET_INVERSE_SQRT } from '@omega/render';
 import type { GLScene as GBufferScene } from '@omega/render';
 import { RenderGraph, type FboSpec } from '@omega/render-graph';
 
@@ -97,6 +97,7 @@ void main() {
 // texture composited here. IBL comes from a seed-deterministic env map.
 const FRAG_PBR = `#version 300 es
 precision highp float;
+${GLSL_DET_INVERSE_SQRT}
 in vec3 vNormal;
 in vec3 vViewPos;   // view-space position (from G-Buffer path)
 in vec4 vColor;
@@ -136,12 +137,12 @@ vec3 fresnelSchlick(float cosT, vec3 f0) {
 }
 
 void main() {
-  vec3 N = normalize(vNormal);
+  vec3 N = det_normalize3(vNormal);
   // Reconstruct a stable view vector from the G-Buffer view-space position
   // (the old code hard-coded V=(0,1,0), which disabled specular at grazing).
-  vec3 V = normalize(-vViewPos);
-  vec3 L = normalize(-uSunDir);
-  vec3 H = normalize(V + L);
+  vec3 V = det_normalize3(-vViewPos);
+  vec3 L = det_normalize3(-uSunDir);
+  vec3 H = det_normalize3(V + L);
 
   float NdotL = max(dot(N, L), 0.0);
   float NdotV = max(dot(N, V), 1e-4);

@@ -25,8 +25,8 @@ const BASE = process.env.BASE || 'http://localhost:5174';
   console.log('mount pageerrors:', mountErrors);
 
   // The app renders only once the RAF loop is started via the UI buttons.
-  await page.getByRole('button', { name: 'Generate' }).click();
-  await page.getByRole('button', { name: '▶ Run' }).click();
+  await page.getByRole('button', { name: /Generate/ }).click();
+  await page.getByRole('button', { name: /Run/ }).click();
   await page.waitForTimeout(1500);
 
   const stats = await page.evaluate(() => {
